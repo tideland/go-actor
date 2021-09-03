@@ -14,6 +14,7 @@ package actor_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -198,7 +199,7 @@ func TestRepairerOK(t *testing.T) {
 	err = act.DoSyncTimeout(func() {
 		counter++
 		// Will crash on first call.
-		print(counter / (counter - 1))
+		fmt.Printf("%v", counter / (counter - 1))
 	}, time.Second)
 	assert.ErrorMatch(err, ".*timeout.*")
 	<-done
@@ -229,7 +230,7 @@ func TestRepairerError(t *testing.T) {
 	err = act.DoSyncTimeout(func() {
 		counter++
 		// Will crash on first call.
-		print(counter / (counter - 1))
+		fmt.Print(counter / (counter - 1))
 	}, time.Second)
 	assert.ErrorMatch(err, "ouch")
 	<-done
