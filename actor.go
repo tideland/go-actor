@@ -1,6 +1,6 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2021 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2022 Frank Mueller / Tideland / Oldenburg / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
@@ -43,7 +43,7 @@ type Action func()
 // work. If it returns nil the backend shall continue
 // work. Otherwise the error is stored and the backend
 // terminated.
-type Repairer func(reason interface{}) error
+type Repairer func(reason any) error
 
 // Finalizer is called with the Actors internal status when
 // the backend loop terminates.

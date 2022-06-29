@@ -1,6 +1,6 @@
 // Tideland Go Actor - Unit Tests
 //
-// Copyright (C) 2019-2021 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2022 Frank Mueller / Tideland / Oldenburg / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
@@ -188,7 +188,7 @@ func TestRepairerOK(t *testing.T) {
 	counter := 0
 	repaired := false
 	done := make(chan struct{})
-	repairer := func(reason interface{}) error {
+	repairer := func(reason any) error {
 		repaired = true
 		close(done)
 		return nil
@@ -199,7 +199,7 @@ func TestRepairerOK(t *testing.T) {
 	err = act.DoSyncTimeout(func() {
 		counter++
 		// Will crash on first call.
-		fmt.Printf("%v", counter / (counter - 1))
+		fmt.Printf("%v", counter/(counter-1))
 	}, time.Second)
 	assert.ErrorMatch(err, ".*timeout.*")
 	<-done
@@ -219,7 +219,7 @@ func TestRepairerError(t *testing.T) {
 	counter := 0
 	repaired := false
 	done := make(chan struct{})
-	repairer := func(reason interface{}) error {
+	repairer := func(reason any) error {
 		repaired = true
 		close(done)
 		return errors.New("ouch")
