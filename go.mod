@@ -1,5 +1,5 @@
 module tideland.dev/go/actor
 
-go 1.17
+go 1.18
 
-require tideland.dev/go/audit v0.4.0
+require tideland.dev/go/audit v0.7.0
