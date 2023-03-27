@@ -20,7 +20,7 @@ I hope you like it. ;)
 ```go
 type Counter struct {
 	counter int
-	act     actor.Actor
+	act     *actor.Actor
 }
 
 func NewCounter() (*Counter, error) {
