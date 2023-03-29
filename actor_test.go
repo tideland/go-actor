@@ -118,7 +118,7 @@ func TestTimeout(t *testing.T) {
 		time.Sleep(5 * time.Second)
 	}, 500*time.Millisecond)
 
-	assert.ErrorMatch(err, ".*timeout.*")
+	assert.ErrorMatch(err, ".*timeout waiting.*")
 
 	act.Stop()
 }
@@ -136,7 +136,7 @@ func TestWithTimeout(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	})
 
-	assert.ErrorMatch(err, ".*timeout.*")
+	assert.ErrorMatch(err, ".*timeout waiting.*")
 
 	act.Stop()
 }
@@ -182,28 +182,26 @@ func TestAsyncWithQueueCap(t *testing.T) {
 	act.Stop()
 }
 
-// TestRepairerOK tests handling panics successfully.
-func TestRepairerOK(t *testing.T) {
+// TestNotifierOK tests handling panic notifications successfully.
+func TestNotifierOK(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	counter := 0
-	repaired := false
+	notified := false
 	done := make(chan struct{})
-	repairer := func(reason any) error {
-		repaired = true
-		close(done)
-		return nil
+	notifier := func(reason any) {
+		defer close(done)
+		notified = true
 	}
-	act, err := actor.Go(actor.WithRepairer(repairer))
+	act, err := actor.Go(actor.WithNotifier(notifier))
 	assert.OK(err)
 
-	err = act.DoSyncTimeout(func() {
+	act.DoSyncTimeout(func() {
 		counter++
 		// Will crash on first call.
 		fmt.Printf("%v", counter/(counter-1))
 	}, time.Second)
-	assert.ErrorMatch(err, ".*timeout.*")
 	<-done
-	assert.OK(repaired)
+	assert.True(notified)
 	err = act.DoSync(func() {
 		counter++
 	})
@@ -211,37 +209,6 @@ func TestRepairerOK(t *testing.T) {
 	assert.Equal(counter, 2)
 
 	act.Stop()
-}
-
-// TestRepairerError tests handling panics with error.
-func TestRepairerError(t *testing.T) {
-	assert := asserts.NewTesting(t, asserts.FailStop)
-	counter := 0
-	repaired := false
-	done := make(chan struct{})
-	repairer := func(reason any) error {
-		repaired = true
-		close(done)
-		return errors.New("ouch")
-	}
-	act, err := actor.Go(actor.WithRepairer(repairer))
-	assert.OK(err)
-
-	err = act.DoSyncTimeout(func() {
-		counter++
-		// Will crash on first call.
-		fmt.Print(counter / (counter - 1))
-	}, time.Second)
-	assert.ErrorMatch(err, "ouch")
-	<-done
-	assert.OK(repaired)
-	assert.ErrorMatch(act.DoSync(func() {
-		counter++
-	}), "ouch")
-
-	act.Stop()
-
-	assert.ErrorMatch(act.Err(), "ouch")
 }
 
 // EOF
