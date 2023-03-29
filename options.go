@@ -53,10 +53,11 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithRepairer defines the panic handler of an actor.
-func WithRepairer(repairer Repairer) Option {
+// WithNotifier sets a function for notifying an external
+// entity about an internal panic when executing an action.
+func WithNotifier(notifier Notifier) Option {
 	return func(act *Actor) error {
-		act.repairer = repairer
+		act.notifier = notifier
 		return nil
 	}
 }

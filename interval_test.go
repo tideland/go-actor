@@ -40,7 +40,7 @@ func TestIntervalStopActor(t *testing.T) {
 	assert.NotNil(act)
 
 	// Start the Interval.
-	stop, err := actor.Interval(act, 10*time.Millisecond, func() {
+	stop, err := act.Interval(10*time.Millisecond, func() {
 		counter++
 	})
 	assert.OK(err)
@@ -72,7 +72,7 @@ func TestIntervalStopInterval(t *testing.T) {
 	assert.NotNil(act)
 
 	// Start the Interval.
-	stop, err := actor.Interval(act, 10*time.Millisecond, func() {
+	stop, err := act.Interval(10*time.Millisecond, func() {
 		counter++
 	})
 	assert.OK(err)

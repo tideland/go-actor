@@ -39,14 +39,14 @@ const (
 // Action defines the signature of an actor action.
 type Action func()
 
-// Repairer allows the Actor to react on a panic during its
-// work. If it returns nil the backend shall continue
-// work. Otherwise the error is stored and the backend
-// terminated.
-type Repairer func(reason any) error
+// Notifier allows the Actor notify an external entity
+// about an internal panic when executing an action. It
+// is just a notification with the reason. To change or
+// fix data of the call use another action.
+type Notifier func(reason any)
 
-// Finalizer is called with the Actors internal status when
-// the backend loop terminates.
+// Finalizer is called with the Actors internal error
+// status when the Actor terminates.
 type Finalizer func(err error) error
 
 //--------------------
@@ -62,7 +62,7 @@ type Actor struct {
 	cancel       func()
 	asyncActions chan Action
 	syncActions  chan Action
-	repairer     Repairer
+	notifier     Notifier
 	finalizer    Finalizer
 	works        atomic.Value
 	err          error
@@ -112,6 +112,7 @@ func (act *Actor) DoAsync(action Action) error {
 // DoAsyncTimeout send the actor function to the backend and returns
 // when it's queued.
 func (act *Actor) DoAsyncTimeout(action Action, timeout time.Duration) error {
+	// Check if we're error free and still working.
 	act.mu.Lock()
 	if act.err != nil {
 		act.mu.Unlock()
@@ -122,10 +123,11 @@ func (act *Actor) DoAsyncTimeout(action Action, timeout time.Duration) error {
 		return fmt.Errorf("actor doesn't work anymore")
 	}
 	act.mu.Unlock()
+	// Send action to backend.
 	select {
 	case act.asyncActions <- action:
 	case <-time.After(timeout):
-		return fmt.Errorf("timeout")
+		return fmt.Errorf("timeout sending action")
 	}
 	return nil
 }
@@ -139,6 +141,7 @@ func (act *Actor) DoSync(action Action) error {
 // DoSyncTimeout executes the action and returns when it's done
 // or it has a timeout.
 func (act *Actor) DoSyncTimeout(action Action, timeout time.Duration) error {
+	// Check if we're error free and still working.
 	act.mu.Lock()
 	if act.err != nil {
 		act.mu.Unlock()
@@ -149,23 +152,28 @@ func (act *Actor) DoSyncTimeout(action Action, timeout time.Duration) error {
 		return fmt.Errorf("actor doesn't work anymore")
 	}
 	act.mu.Unlock()
+	// Create signal channel for done work and send action. Then
+	// wait for the signal or the timeout.
 	done := make(chan struct{})
 	syncAction := func() {
+		defer close(done)
 		action()
-		close(done)
 	}
+	now := time.Now()
 	select {
 	case act.syncActions <- syncAction:
 	case <-time.After(timeout):
-		return fmt.Errorf("timeout")
+		return fmt.Errorf("timeout sending action")
 	}
+	sent := time.Now()
+	timeout = timeout - sent.Sub(now)
 	select {
 	case <-done:
 	case <-time.After(timeout):
 		if !act.works.Load().(bool) {
 			return act.err
 		}
-		return fmt.Errorf("timeout")
+		return fmt.Errorf("timeout waiting for done action")
 	}
 	return nil
 }
@@ -193,6 +201,7 @@ func (act *Actor) Stop() {
 func (act *Actor) backend(started chan struct{}) {
 	defer act.finalize()
 	close(started)
+	// Work as long as we're not stopped.
 	for act.works.Load().(bool) {
 		act.work()
 	}
@@ -202,22 +211,11 @@ func (act *Actor) backend(started chan struct{}) {
 // a possible repairer.
 func (act *Actor) work() {
 	defer func() {
-		// Check and handle panics!
-		reason := recover()
-		switch {
-		case reason != nil && act.repairer != nil:
-			// Try to repair.
-			err := act.repairer(reason)
-			act.mu.Lock()
-			act.err = err
-			act.works.Store(act.err == nil)
-			act.mu.Unlock()
-		case reason != nil && act.repairer == nil:
-			// Accept panic.
-			act.mu.Lock()
-			act.err = fmt.Errorf("actor panic: %v", reason)
-			act.works.Store(false)
-			act.mu.Unlock()
+		// Check panics and possibly send notification.
+		if reason := recover(); reason != nil {
+			if act.notifier != nil {
+				go act.notifier(reason)
+			}
 		}
 	}()
 	// Select in loop.

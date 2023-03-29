@@ -19,29 +19,27 @@ import (
 // INTERVAL
 //--------------------
 
-// IntervalTimeout uses a given Actor to run a function in a
-// given interval. It will be done asynchronously with the
-// given timeout. If the Actor is stopped, IntervalTimeout
-// will be stopped, too. Calling the IntervalTimeout returns
-// a function to stop the interval.
-func IntervalTimeout(
-	act *Actor,
+// IntervalTimeout runs an Action in agiven interval. It will
+// be done asynchronously with the given timeout. If the Actor
+// is stopped, IntervalTimeout will be stopped, too. Calling
+// the IntervalTimeout returns a function to stop the interval.
+func (act *Actor) IntervalTimeout(
 	interval time.Duration,
 	action Action,
 	timeout time.Duration) (func(), error) {
 	if act.Err() != nil {
 		return nil, act.Err()
 	}
-	stopc := make(chan struct{})
+	done := make(chan struct{})
 	stopper := func() {
-		if stopc != nil {
-			close(stopc)
+		if done != nil {
+			close(done)
 		}
 	}
 	// Goroutine to run the interval.
 	go func() {
 		defer func() {
-			stopc = nil
+			done = nil
 		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -49,7 +47,7 @@ func IntervalTimeout(
 			select {
 			case <-act.ctx.Done():
 				return
-			case <-stopc:
+			case <-done:
 				return
 			case <-ticker.C:
 				if act.DoAsyncTimeout(action, timeout) != nil {
@@ -64,11 +62,10 @@ func IntervalTimeout(
 // Interval uses a given Actor to run a function in a given interval.
 // If the Actor is stopped, Interval will be stopped, too. Calling the
 // Interval returns a function to stop the interval.
-func Interval(
-	act *Actor,
+func (act *Actor) Interval(
 	interval time.Duration,
 	action Action) (func(), error) {
-	return IntervalTimeout(act, interval, action, defaultTimeout)
+	return act.IntervalTimeout(interval, action, defaultTimeout)
 }
 
 // EOF
