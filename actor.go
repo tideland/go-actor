@@ -14,7 +14,6 @@ package actor // import "tideland.dev/go/actor"
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -39,14 +38,16 @@ const (
 // Action defines the signature of an actor action.
 type Action func()
 
-// Notifier allows the Actor notify an external entity
-// about an internal panic when executing an action. It
-// is just a notification with the reason. To change or
-// fix data of the call use another action.
-type Notifier func(reason any)
+// Recoverer defines the signature of a function for recovering
+// from a panic during executing an action. The reason is the
+// panic value. The function should return the error to be
+// returned by the Actor. If the error is nil, the Actor will
+// continue to work.
+type Recoverer func(reason any) error
 
-// Finalizer is called with the Actors internal error
-// status when the Actor terminates.
+// Finalizer defines the signature of a function for finalizing
+// the work of an Actor. The error is the one returned by the
+// Actor.
 type Finalizer func(err error) error
 
 //--------------------
@@ -56,51 +57,58 @@ type Finalizer func(err error) error
 // Actor allows to simply use and control a goroutine and sending
 // functions to be executed sequentially by that goroutine.
 type Actor struct {
-	mu           sync.Mutex
-	ctx          context.Context
 	timeout      time.Duration
 	cancel       func()
 	asyncActions chan Action
 	syncActions  chan Action
-	notifier     Notifier
+	recoverer    Recoverer
 	finalizer    Finalizer
-	works        atomic.Value
-	err          error
+	err          atomic.Pointer[error]
+	done         chan struct{}
 }
 
-// Go starts an Actor with the given options.
-func Go(options ...Option) (*Actor, error) {
+// GoContext starts an Actor with a context and the given options.
+func GoContext(ctx context.Context, options ...Option) (*Actor, error) {
 	// Init with options.
 	act := &Actor{
 		syncActions: make(chan Action),
+		done:        make(chan struct{}),
 	}
-	act.works.Store(true)
 	for _, option := range options {
 		if err := option(act); err != nil {
 			return nil, err
 		}
 	}
 	// Ensure default settings.
-	if act.ctx == nil {
-		act.ctx, act.cancel = context.WithCancel(context.Background())
-	} else {
-		act.ctx, act.cancel = context.WithCancel(act.ctx)
-	}
+	ctx, act.cancel = context.WithCancel(ctx)
 	if act.timeout == 0 {
 		act.timeout = defaultTimeout
 	}
 	if act.asyncActions == nil {
 		act.asyncActions = make(chan Action, defaultQueueCap)
 	}
+	if act.recoverer == nil {
+		act.recoverer = func(reason any) error {
+			return fmt.Errorf("panic during actor action: %v", reason)
+		}
+	}
+	if act.finalizer == nil {
+		act.finalizer = func(err error) error { return err }
+	}
 	// Create loop with its options.
 	started := make(chan struct{})
-	go act.backend(started)
+	go act.backend(ctx, started)
 	select {
 	case <-started:
 		return act, nil
 	case <-time.After(act.timeout):
 		return nil, fmt.Errorf("timeout starting actor after %.1f seconds", act.timeout.Seconds())
 	}
+}
+
+// Go starts an Actor with the given options.
+func Go(options ...Option) (*Actor, error) {
+	return GoContext(context.Background(), options...)
 }
 
 // DoAsync sends the actor function to the backend goroutine and returns
@@ -113,16 +121,12 @@ func (act *Actor) DoAsync(action Action) error {
 // when it's queued.
 func (act *Actor) DoAsyncTimeout(action Action, timeout time.Duration) error {
 	// Check if we're error free and still working.
-	act.mu.Lock()
-	if act.err != nil {
-		act.mu.Unlock()
-		return act.err
+	if act.err.Load() != nil {
+		return *act.err.Load()
 	}
-	if !act.works.Load().(bool) {
-		act.mu.Unlock()
-		return fmt.Errorf("actor doesn't work anymore")
+	if act.IsDone() {
+		return fmt.Errorf("actor is done")
 	}
-	act.mu.Unlock()
 	// Send action to backend.
 	select {
 	case act.asyncActions <- action:
@@ -142,21 +146,17 @@ func (act *Actor) DoSync(action Action) error {
 // or it has a timeout.
 func (act *Actor) DoSyncTimeout(action Action, timeout time.Duration) error {
 	// Check if we're error free and still working.
-	act.mu.Lock()
-	if act.err != nil {
-		act.mu.Unlock()
-		return act.err
+	if act.err.Load() != nil {
+		return *act.err.Load()
 	}
-	if !act.works.Load().(bool) {
-		act.mu.Unlock()
-		return fmt.Errorf("actor doesn't work anymore")
+	if act.IsDone() {
+		return fmt.Errorf("actor is done")
 	}
-	act.mu.Unlock()
 	// Create signal channel for done work and send action. Then
 	// wait for the signal or the timeout.
-	done := make(chan struct{})
+	actionDone := make(chan struct{})
 	syncAction := func() {
-		defer close(done)
+		defer close(actionDone)
 		action()
 	}
 	now := time.Now()
@@ -168,60 +168,72 @@ func (act *Actor) DoSyncTimeout(action Action, timeout time.Duration) error {
 	sent := time.Now()
 	timeout = timeout - sent.Sub(now)
 	select {
-	case <-done:
+	case <-actionDone:
 	case <-time.After(timeout):
-		if !act.works.Load().(bool) {
-			return act.err
-		}
-		return fmt.Errorf("timeout waiting for done action")
+		return fmt.Errorf("timeout waiting for action execution")
 	}
 	return nil
 }
 
+// Done returns a channel that is closed when the Actor terminates.
+func (act *Actor) Done() <-chan struct{} {
+	return act.done
+}
+
+func (act *Actor) IsDone() bool {
+	select {
+	case <-act.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // Err returns information if the Actor has an error.
 func (act *Actor) Err() error {
-	act.mu.Lock()
-	defer act.mu.Unlock()
-	return act.err
+	err := act.err.Load()
+	if err == nil {
+		return nil
+	}
+	return *err
 }
 
 // Stop terminates the Actor backend.
 func (act *Actor) Stop() {
-	act.mu.Lock()
-	defer act.mu.Unlock()
-	if !act.works.Load().(bool) {
-		// Already stopped.
+	if act.IsDone() {
 		return
 	}
-	act.works.Store(false)
 	act.cancel()
 }
 
 // backend runs the goroutine of the Actor.
-func (act *Actor) backend(started chan struct{}) {
+func (act *Actor) backend(ctx context.Context, started chan struct{}) {
 	defer act.finalize()
 	close(started)
 	// Work as long as we're not stopped.
-	for act.works.Load().(bool) {
-		act.work()
+	for !act.IsDone() {
+		act.work(ctx)
 	}
 }
 
 // work runs the select in a loop, including
 // a possible repairer.
-func (act *Actor) work() {
+func (act *Actor) work(ctx context.Context) {
 	defer func() {
 		// Check panics and possibly send notification.
 		if reason := recover(); reason != nil {
-			if act.notifier != nil {
-				go act.notifier(reason)
+			err := act.recoverer(reason)
+			if err != nil {
+				act.err.Store(&err)
+				close(act.done)
 			}
 		}
 	}()
 	// Select in loop.
 	for {
 		select {
-		case <-act.ctx.Done():
+		case <-ctx.Done():
+			close(act.done)
 			return
 		case action := <-act.asyncActions:
 			action()
@@ -233,10 +245,15 @@ func (act *Actor) work() {
 
 // finalize takes care for a clean loop finalization.
 func (act *Actor) finalize() {
-	act.mu.Lock()
-	defer act.mu.Unlock()
-	if act.finalizer != nil {
-		act.err = act.finalizer(act.err)
+	var ferr error
+	err := act.err.Load()
+	if err != nil {
+		ferr = act.finalizer(*err)
+	} else {
+		ferr = act.finalizer(nil)
+	}
+	if ferr != nil {
+		act.err.Store(&ferr)
 	}
 }
 

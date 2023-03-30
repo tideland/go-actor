@@ -12,7 +12,6 @@ package actor // import "tideland.dev/go/actor"
 //--------------------
 
 import (
-	"context"
 	"time"
 )
 
@@ -22,14 +21,6 @@ import (
 
 // Option defines the signature of an option setting function.
 type Option func(act *Actor) error
-
-// WithContext allows to pass a context for cancellation or timeout.
-func WithContext(ctx context.Context) Option {
-	return func(act *Actor) error {
-		act.ctx = ctx
-		return nil
-	}
-}
 
 // WithQueueCap defines the channel capacity for actions sent to an Actor.
 func WithQueueCap(c int) Option {
@@ -53,11 +44,11 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithNotifier sets a function for notifying an external
-// entity about an internal panic when executing an action.
-func WithNotifier(notifier Notifier) Option {
+// WithRecoverer sets a function for recovering from a panic
+// during executing an action.
+func WithRecoverer(recoverer Recoverer) Option {
 	return func(act *Actor) error {
-		act.notifier = notifier
+		act.recoverer = recoverer
 		return nil
 	}
 }

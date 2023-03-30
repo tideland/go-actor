@@ -48,18 +48,24 @@
 //			c.act.Stop()
 //		}
 //
-// The options for the constructor allow to pass a context for stopping,
+// The options for the constructor allow to pass a function for finalizing,
 // the timeout of actions, how many actions are queued, and a function
-// for notifications in case of panics.
+// for recovering in case of panics.
 //
-// For regular actions of the actor there are still the Interval methods.
-// They allow the actions to be called at defined intervals.
+// For regular actions of the actor there are still the Periodical methods.
+// They allow the actions to be called at defined intervals. Like in the
+// example above, the startAutoIncrement() method is called in the constructor.
+// It starts a Periodical action which increases the counter every second.
 //
 //	func (c *Counter) startAutoIncrement() {
-//	    c.act.Interval(1*time.Second, func() {
+//	    c.act.Periodical(1*time.Second, func() {
 //	        c.counter++
 //	    })
 //	}
+//
+// For more control Periodical() returns a function which can be called to
+// the individual periodical action. Otherwise it will be stopped togeether
+// with the actor.
 package actor // import "tideland.dev/go/actor"
 
 // EOF

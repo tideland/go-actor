@@ -45,6 +45,25 @@ func TestPureOK(t *testing.T) {
 	assert.NoError(act.Err())
 }
 
+// TestPureDoubleStop verifies stopping an Actor twice.
+func TestPureDoubleStop(t *testing.T) {
+	assert := asserts.NewTesting(t, asserts.FailStop)
+	finalized := make(chan struct{})
+	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+		defer close(finalized)
+		return err
+	}))
+	assert.OK(err)
+	assert.NotNil(act)
+
+	act.Stop()
+	act.Stop()
+
+	<-finalized
+
+	assert.NoError(act.Err())
+}
+
 // TestPureError verifies starting and stopping an Actor.
 // Returning the stop error.
 func TestPureError(t *testing.T) {
@@ -64,12 +83,12 @@ func TestPureError(t *testing.T) {
 	assert.ErrorMatch(act.Err(), "damn")
 }
 
-// TestWithContext verifies starting and stopping an Actor
-// with a context.
-func TestWithContext(t *testing.T) {
+// TestContext verifies starting and stopping an Actor
+// with an external context.
+func TestContext(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	ctx, cancel := context.WithCancel(context.Background())
-	act, err := actor.Go(actor.WithContext(ctx))
+	act, err := actor.GoContext(ctx)
 	assert.OK(err)
 	assert.NotNil(act)
 
@@ -103,7 +122,7 @@ func TestSync(t *testing.T) {
 
 	assert.ErrorMatch(act.DoSync(func() {
 		counter++
-	}), "actor doesn't work anymore")
+	}), "actor is done")
 }
 
 // TestTimeout verifies timout error of a synchronous Action.
@@ -182,17 +201,18 @@ func TestAsyncWithQueueCap(t *testing.T) {
 	act.Stop()
 }
 
-// TestNotifierOK tests handling panic notifications successfully.
+// TestRecovererOK tests successful handling of panic recoveries.
 func TestNotifierOK(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	counter := 0
-	notified := false
+	recovered := false
 	done := make(chan struct{})
-	notifier := func(reason any) {
+	recoverer := func(reason any) error {
 		defer close(done)
-		notified = true
+		recovered = true
+		return nil
 	}
-	act, err := actor.Go(actor.WithNotifier(notifier))
+	act, err := actor.Go(actor.WithRecoverer(recoverer))
 	assert.OK(err)
 
 	act.DoSyncTimeout(func() {
@@ -201,7 +221,7 @@ func TestNotifierOK(t *testing.T) {
 		fmt.Printf("%v", counter/(counter-1))
 	}, time.Second)
 	<-done
-	assert.True(notified)
+	assert.True(recovered)
 	err = act.DoSync(func() {
 		counter++
 	})
@@ -209,6 +229,32 @@ func TestNotifierOK(t *testing.T) {
 	assert.Equal(counter, 2)
 
 	act.Stop()
+}
+
+// TestRecovererFail tests failing handling of panic recoveries.
+func TestNotifierFail(t *testing.T) {
+	assert := asserts.NewTesting(t, asserts.FailStop)
+	counter := 0
+	recovered := false
+	done := make(chan struct{})
+	recoverer := func(reason any) error {
+		defer close(done)
+		recovered = true
+		return fmt.Errorf("ouch: %v", reason)
+	}
+	act, err := actor.Go(actor.WithRecoverer(recoverer))
+	assert.OK(err)
+
+	act.DoSyncTimeout(func() {
+		counter++
+		// Will crash on first call.
+		fmt.Printf("%v", counter/(counter-1))
+	}, time.Second)
+	<-done
+	assert.True(recovered)
+
+	assert.True(act.IsDone())
+	assert.ErrorMatch(act.Err(), "ouch:.*")
 }
 
 // EOF

@@ -1,4 +1,4 @@
-// Tideland Go Actor - Interval
+// Tideland Go Actor
 //
 // Copyright (C) 2019-2023 Frank Mueller / Tideland / Oldenburg / Germany
 //
@@ -16,14 +16,14 @@ import (
 )
 
 //--------------------
-// INTERVAL
+// PERIODICAL
 //--------------------
 
-// IntervalTimeout runs an Action in agiven interval. It will
+// PeriodicalTimeout runs an Action in a given interval. It will
 // be done asynchronously with the given timeout. If the Actor
-// is stopped, IntervalTimeout will be stopped, too. Calling
-// the IntervalTimeout returns a function to stop the interval.
-func (act *Actor) IntervalTimeout(
+// is stopped, the periodical will be stopped, too. Starting the
+// periodical also returns a function to stop only this periodical.
+func (act *Actor) PeriodicalTimeout(
 	interval time.Duration,
 	action Action,
 	timeout time.Duration) (func(), error) {
@@ -45,7 +45,7 @@ func (act *Actor) IntervalTimeout(
 		defer ticker.Stop()
 		for {
 			select {
-			case <-act.ctx.Done():
+			case <-act.Done():
 				return
 			case <-done:
 				return
@@ -59,13 +59,13 @@ func (act *Actor) IntervalTimeout(
 	return stopper, nil
 }
 
-// Interval uses a given Actor to run a function in a given interval.
-// If the Actor is stopped, Interval will be stopped, too. Calling the
-// Interval returns a function to stop the interval.
-func (act *Actor) Interval(
+// Periodical runs an Action in a given interval. If the Actor is stopped,
+// the periodical will be stopped, too. Starting the periodical also returns
+// a function to stop only this periodical.
+func (act *Actor) Periodical(
 	interval time.Duration,
 	action Action) (func(), error) {
-	return act.IntervalTimeout(interval, action, defaultTimeout)
+	return act.PeriodicalTimeout(interval, action, defaultTimeout)
 }
 
 // EOF

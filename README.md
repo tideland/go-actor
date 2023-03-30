@@ -10,8 +10,11 @@
 ## Description
 
 **Tideland Go Actor** provides running backend goroutines for the sequential execution
-of anonymous functions. Those can work synchronously as well as synchronously. This simplifies
-the implementation of concurrent code.
+of anonymous functions following the actor model. The Actors can work asynchronously as
+well as synchronously. Additionally the Actor provides methods for the periodical 
+execution of code under control of an Actor. So background operation can be automated.
+
+All together simplifies the implementation of concurrent code.
 
 I hope you like it. ;)
 
