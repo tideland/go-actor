@@ -16,8 +16,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-
-	"tideland.dev/go/wait"
 )
 
 //--------------------
@@ -129,13 +127,14 @@ func Go(options ...Option) (*Actor, error) {
 		act.finalizer = func(err error) error { return err }
 	}
 	// Start the backend, wait for it to be ready.
-	go act.backend()
+	started := make(chan struct{})
 
-	err := wait.WithMaxIntervals(act.ctx, 10*time.Millisecond, 10, func() (bool, error) {
-		return act.done != nil, nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("cannot start actor: %v", err)
+	go act.backend(started)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		return nil, fmt.Errorf("actor backend did not start")
 	}
 	return act, nil
 }
@@ -234,8 +233,9 @@ func (act *Actor) Stop() {
 }
 
 // backend runs the goroutine of the Actor.
-func (act *Actor) backend() {
+func (act *Actor) backend(started chan struct{}) {
 	defer act.finalize()
+	close(started)
 
 	act.done = make(chan struct{})
 

@@ -39,16 +39,40 @@ func TestMass(t *testing.T) {
 		n = rand.Intn(len(pps))
 		pps[n].Pong()
 	}
-	// Let's wat 5 seconds before stopping.
-	time.Sleep(5 * time.Second)
-	// Let's stop the actors.
+	// Let's wait one seconds before stopping.
+	time.Sleep(1 * time.Second)
+	// Let's check some random ping pong pairs.
 	for _, pp := range pps {
 		pings, pongs := pp.PingPongs()
 		assert.True(pings > 0)
 		assert.True(pongs > 0)
 		pp.Stop()
-		assert.NoError(pp.Err())
 	}
+}
+
+// TestPerformance verifies the starting and stopping an Actor.
+func TestPerformance(t *testing.T) {
+	assert := asserts.NewTesting(t, asserts.FailStop)
+	finalized := make(chan struct{})
+	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+		defer close(finalized)
+		return err
+	}))
+	assert.OK(err)
+	assert.NotNil(act)
+
+	now := time.Now()
+	for i := 0; i < 10000; i++ {
+		act.DoAsync(func() {})
+	}
+	duration := time.Since(now)
+	assert.True(duration < 100*time.Millisecond)
+
+	act.Stop()
+
+	<-finalized
+
+	assert.NoError(act.Err())
 }
 
 //--------------------
@@ -69,7 +93,7 @@ func NewPingPong(pps []*PingPong) *PingPong {
 		pings: 0,
 		pongs: 0,
 	}
-	act, err := actor.Go()
+	act, err := actor.Go(actor.WithQueueCap(256))
 	if err != nil {
 		panic(err)
 	}

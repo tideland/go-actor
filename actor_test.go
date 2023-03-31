@@ -133,20 +133,20 @@ func TestTimeout(t *testing.T) {
 
 	// Scenario: Timeout is shorter than needed time, so error
 	// is returned.
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	err = act.DoSyncWithContext(ctx, func() {
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 	})
 	assert.NoError(err)
 	cancel()
-	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
 	err = act.DoSyncWithContext(ctx, func() {
-		time.Sleep(2 * time.Second)
+		time.Sleep(100 * time.Millisecond)
 	})
 	assert.ErrorMatch(err, ".*action timed out or cancelled.*")
 	cancel()
 
-	time.Sleep(4 * time.Second)
+	time.Sleep(150 * time.Millisecond)
 	act.Stop()
 }
 
@@ -154,18 +154,18 @@ func TestTimeout(t *testing.T) {
 // when the Actor is configured with a context timeout.
 func TestWithTimeoutContext(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	act, err := actor.Go(actor.WithContext(ctx))
 	assert.OK(err)
 
 	// Scenario: Configured timeout is shorter than needed
 	// time, so error is returned.
 	err = act.DoSync(func() {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	})
 	assert.NoError(err)
 	err = act.DoSync(func() {
-		time.Sleep(2 * time.Second)
+		time.Sleep(100 * time.Millisecond)
 	})
 	assert.ErrorMatch(err, ".*actor timed out or cancelled.*")
 
@@ -196,20 +196,20 @@ func TestAsyncWithQueueCap(t *testing.T) {
 	}()
 
 	// Now start asynchrounous calls.
-	start := time.Now()
+	now := time.Now()
 	for i := 0; i < 128; i++ {
 		assert.OK(act.DoAsync(func() {
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(2 * time.Millisecond)
 			sigs <- struct{}{}
 		}))
 	}
-	enqueued := time.Since(start)
+	enqueued := time.Since(now)
 
 	// Expect signal done to be sent about one second later.
 	<-done
-	duration := time.Since(start)
+	duration := time.Since(now)
 
-	assert.OK((duration - 640*time.Millisecond) > enqueued)
+	assert.OK((duration - 250*time.Millisecond) > enqueued)
 
 	act.Stop()
 }
