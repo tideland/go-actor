@@ -12,6 +12,7 @@ package actor // import "tideland.dev/go/actor"
 //--------------------
 
 import (
+	"context"
 	"time"
 )
 
@@ -19,53 +20,44 @@ import (
 // PERIODICAL
 //--------------------
 
-// PeriodicalTimeout runs an Action in a given interval. It will
-// be done asynchronously with the given timeout. If the Actor
-// is stopped, the periodical will be stopped, too. Starting the
-// periodical also returns a function to stop only this periodical.
-func (act *Actor) PeriodicalTimeout(
+// PeriodicalWithContext runs an Action in a given interval. It will
+// be done asynchronously until the context is canceled or timeout, the
+// returned stopper function is called or the Actor is stopped.
+func (act *Actor) PeriodicalWithContext(
+	ctx context.Context,
 	interval time.Duration,
-	action Action,
-	timeout time.Duration) (func(), error) {
+	action Action) (func(), error) {
 	if act.Err() != nil {
 		return nil, act.Err()
 	}
-	done := make(chan struct{})
-	stopper := func() {
-		if done != nil {
-			close(done)
-		}
-	}
+	ctx, cancel := context.WithCancel(ctx)
 	// Goroutine to run the interval.
 	go func() {
-		defer func() {
-			done = nil
-		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-act.Done():
 				return
-			case <-done:
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if act.DoAsyncTimeout(action, timeout) != nil {
+				if act.DoAsyncWithContext(ctx, action) != nil {
 					return
 				}
 			}
 		}
 	}()
-	return stopper, nil
+	return cancel, nil
 }
 
-// Periodical runs an Action in a given interval. If the Actor is stopped,
-// the periodical will be stopped, too. Starting the periodical also returns
-// a function to stop only this periodical.
+// Periodical runs an Action in a given interval. It will
+// be done asynchronously until the returned stopper function
+// is called or the Actor is stopped.
 func (act *Actor) Periodical(
 	interval time.Duration,
 	action Action) (func(), error) {
-	return act.PeriodicalTimeout(interval, action, defaultTimeout)
+	return act.PeriodicalWithContext(context.Background(), interval, action)
 }
 
 // EOF

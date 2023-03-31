@@ -88,7 +88,7 @@ func TestPureError(t *testing.T) {
 func TestContext(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	ctx, cancel := context.WithCancel(context.Background())
-	act, err := actor.GoContext(ctx)
+	act, err := actor.Go(actor.WithContext(ctx))
 	assert.OK(err)
 	assert.NotNil(act)
 
@@ -133,31 +133,44 @@ func TestTimeout(t *testing.T) {
 
 	// Scenario: Timeout is shorter than needed time, so error
 	// is returned.
-	err = act.DoSyncTimeout(func() {
-		time.Sleep(5 * time.Second)
-	}, 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	err = act.DoSyncWithContext(ctx, func() {
+		time.Sleep(250 * time.Millisecond)
+	})
+	assert.NoError(err)
+	cancel()
+	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+	err = act.DoSyncWithContext(ctx, func() {
+		time.Sleep(2 * time.Second)
+	})
+	assert.ErrorMatch(err, ".*action timed out or cancelled.*")
+	cancel()
 
-	assert.ErrorMatch(err, ".*timeout waiting.*")
-
+	time.Sleep(4 * time.Second)
 	act.Stop()
 }
 
-// TestWithTimeout verifies timout error of a synchronous Action
-// after setting it as option.
-func TestWithTimeout(t *testing.T) {
+// TestWithTimeoutContext verifies timout error of a synchronous Action
+// when the Actor is configured with a context timeout.
+func TestWithTimeoutContext(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
-	act, err := actor.Go(actor.WithTimeout(time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	act, err := actor.Go(actor.WithContext(ctx))
 	assert.OK(err)
 
 	// Scenario: Configured timeout is shorter than needed
 	// time, so error is returned.
 	err = act.DoSync(func() {
+		time.Sleep(50 * time.Millisecond)
+	})
+	assert.NoError(err)
+	err = act.DoSync(func() {
 		time.Sleep(2 * time.Second)
 	})
-
-	assert.ErrorMatch(err, ".*timeout waiting.*")
+	assert.ErrorMatch(err, ".*actor timed out or cancelled.*")
 
 	act.Stop()
+	cancel()
 }
 
 // TestAsyncWithQueueCap tests running multiple calls asynchronously.
@@ -215,11 +228,11 @@ func TestNotifierOK(t *testing.T) {
 	act, err := actor.Go(actor.WithRecoverer(recoverer))
 	assert.OK(err)
 
-	act.DoSyncTimeout(func() {
+	act.DoSync(func() {
 		counter++
 		// Will crash on first call.
 		fmt.Printf("%v", counter/(counter-1))
-	}, time.Second)
+	})
 	<-done
 	assert.True(recovered)
 	err = act.DoSync(func() {
@@ -245,11 +258,11 @@ func TestNotifierFail(t *testing.T) {
 	act, err := actor.Go(actor.WithRecoverer(recoverer))
 	assert.OK(err)
 
-	act.DoSyncTimeout(func() {
+	act.DoSync(func() {
 		counter++
 		// Will crash on first call.
 		fmt.Printf("%v", counter/(counter-1))
-	}, time.Second)
+	})
 	<-done
 	assert.True(recovered)
 

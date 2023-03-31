@@ -12,7 +12,7 @@ package actor // import "tideland.dev/go/actor"
 //--------------------
 
 import (
-	"time"
+	"context"
 )
 
 //--------------------
@@ -22,24 +22,21 @@ import (
 // Option defines the signature of an option setting function.
 type Option func(act *Actor) error
 
+// WithContext sets the context for the actor.
+func WithContext(ctx context.Context) Option {
+	return func(act *Actor) error {
+		act.ctx = ctx
+		return nil
+	}
+}
+
 // WithQueueCap defines the channel capacity for actions sent to an Actor.
 func WithQueueCap(c int) Option {
 	return func(act *Actor) error {
 		if c < defaultQueueCap {
 			c = defaultQueueCap
 		}
-		act.asyncActions = make(chan Action, c)
-		return nil
-	}
-}
-
-// WithTimeout sets the timeout for sending actions to the actor.
-func WithTimeout(timeout time.Duration) Option {
-	return func(act *Actor) error {
-		if timeout < 0 {
-			timeout = defaultTimeout
-		}
-		act.timeout = timeout
+		act.asyncRequests = make(chan *request, c)
 		return nil
 	}
 }
