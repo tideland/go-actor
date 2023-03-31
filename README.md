@@ -10,8 +10,11 @@
 ## Description
 
 **Tideland Go Actor** provides running backend goroutines for the sequential execution
-of anonymous functions. Those can work synchronously as well as synchronously. This simplifies
-the implementation of concurrent code.
+of anonymous functions following the actor model. The Actors can work asynchronously as
+well as synchronously. Additionally the Actor provides methods for the periodical 
+execution of code under control of an Actor. So background operation can be automated.
+
+All together simplifies the implementation of concurrent code.
 
 I hope you like it. ;)
 
@@ -32,16 +35,19 @@ func NewCounter() (*Counter, error) {
 		counter: 0,
 		act:     act,
 	}
+	c.startAutoIncrement()
 	return c, nil
 }
 
 func (c *Counter) Incr() error {
+	// Increment will be done in the background.
 	return c.act.DoAsync(func() {
 		c.counter++
 	})
 }
 
 func (c *Counter) Get() (int, error) {
+	// Retrieve the current count synchronously.
 	var counter int
 	if err := c.act.DoSync(func() {
 		counter = c.counter
@@ -55,6 +61,25 @@ func (c *Counter) Stop() {
 	c.act.Stop()
 }
 ```
+
+For periodic execution of `Actions` using an `Actor` there are the `Periodical()`
+methods. They allow the actions to be called at defined intervals. Like in the
+example above, the `startAutoIncrement()` method is called in the constructor.
+It starts a periodical `Action` which increases the counter every second.
+
+```go
+func (c *Counter) startAutoIncrement() {
+	// Run counter increment asynchronously every second.
+	interval := 1 * time.Second
+	c.act.Periodical(interval, func() {
+		c.counter++
+	})
+}
+```
+
+For more control `Periodical()` returns a function which can be called to
+the individual periodical action. Otherwise it will be stopped togeether
+with the `Actor` or based on a passed context.
 
 ## Contributors
 

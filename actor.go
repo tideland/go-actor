@@ -14,7 +14,6 @@ package actor // import "tideland.dev/go/actor"
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -24,9 +23,6 @@ import (
 //--------------------
 
 const (
-	// defaultTimeout is used in a DoSync() call.
-	defaultTimeout = 5 * time.Second
-
 	// defaultQueueCap is the minimum and default capacity
 	// of the async actions queue.
 	defaultQueueCap = 256
@@ -39,161 +35,200 @@ const (
 // Action defines the signature of an actor action.
 type Action func()
 
-// Notifier allows the Actor notify an external entity
-// about an internal panic when executing an action. It
-// is just a notification with the reason. To change or
-// fix data of the call use another action.
-type Notifier func(reason any)
+// Recoverer defines the signature of a function for recovering
+// from a panic during executing an action. The reason is the
+// panic value. The function should return the error to be
+// returned by the Actor. If the error is nil, the Actor will
+// continue to work.
+type Recoverer func(reason any) error
 
-// Finalizer is called with the Actors internal error
-// status when the Actor terminates.
+// Finalizer defines the signature of a function for finalizing
+// the work of an Actor. The error is the one returned by the
+// Actor.
 type Finalizer func(err error) error
 
 //--------------------
 // ACTOR
 //--------------------
 
-// Actor allows to simply use and control a goroutine and sending
-// functions to be executed sequentially by that goroutine.
+// request wraps an action with its context.
+type request struct {
+	ctx    context.Context
+	done   chan struct{}
+	err    error
+	action Action
+}
+
+// newRequest creates a request including a done channel. The
+// Action is wrapped with a closure which closes the done channel
+// after the action has been executed.
+func newRequest(ctx context.Context, action Action) *request {
+	return &request{
+		ctx:    ctx,
+		done:   make(chan struct{}),
+		action: action,
+	}
+}
+
+// execute checks if the request context is canceled or timed out.
+// If not, it performs the action and closes the done channel.
+func (req *request) execute() error {
+	defer close(req.done)
+	d, ok := req.ctx.Deadline()
+	if ok {
+		select {
+		case <-req.ctx.Done():
+			return req.ctx.Err()
+		case <-time.After(time.Until(d)):
+			return fmt.Errorf("actor request timed out")
+		default:
+		}
+	}
+	req.action()
+	return nil
+}
+
+// Actor introduces the actor model, where call simply are executed
+// sequentially in a backend goroutine.
 type Actor struct {
-	mu           sync.Mutex
-	ctx          context.Context
-	timeout      time.Duration
-	cancel       func()
-	asyncActions chan Action
-	syncActions  chan Action
-	notifier     Notifier
-	finalizer    Finalizer
-	works        atomic.Value
-	err          error
+	ctx           context.Context
+	cancel        func()
+	asyncRequests chan *request
+	syncRequests  chan *request
+	recoverer     Recoverer
+	finalizer     Finalizer
+	err           atomic.Pointer[error]
+	done          chan struct{}
 }
 
 // Go starts an Actor with the given options.
 func Go(options ...Option) (*Actor, error) {
 	// Init with options.
 	act := &Actor{
-		syncActions: make(chan Action),
+		ctx:          context.Background(),
+		syncRequests: make(chan *request),
 	}
-	act.works.Store(true)
 	for _, option := range options {
 		if err := option(act); err != nil {
 			return nil, err
 		}
 	}
 	// Ensure default settings.
-	if act.ctx == nil {
-		act.ctx, act.cancel = context.WithCancel(context.Background())
-	} else {
-		act.ctx, act.cancel = context.WithCancel(act.ctx)
+	act.ctx, act.cancel = context.WithCancel(act.ctx)
+	if act.asyncRequests == nil {
+		act.asyncRequests = make(chan *request, defaultQueueCap)
 	}
-	if act.timeout == 0 {
-		act.timeout = defaultTimeout
+	if act.recoverer == nil {
+		act.recoverer = func(reason any) error {
+			return fmt.Errorf("panic during actor action: %v", reason)
+		}
 	}
-	if act.asyncActions == nil {
-		act.asyncActions = make(chan Action, defaultQueueCap)
+	if act.finalizer == nil {
+		act.finalizer = func(err error) error { return err }
 	}
-	// Create loop with its options.
+	// Start the backend, wait for it to be ready.
 	started := make(chan struct{})
+
 	go act.backend(started)
+
 	select {
 	case <-started:
-		return act, nil
-	case <-time.After(act.timeout):
-		return nil, fmt.Errorf("timeout starting actor after %.1f seconds", act.timeout.Seconds())
+	case <-time.After(time.Second):
+		return nil, fmt.Errorf("actor backend did not start")
 	}
+	return act, nil
 }
 
 // DoAsync sends the actor function to the backend goroutine and returns
 // when it's queued.
 func (act *Actor) DoAsync(action Action) error {
-	return act.DoAsyncTimeout(action, act.timeout)
+	return act.DoAsyncWithContext(context.Background(), action)
 }
 
-// DoAsyncTimeout send the actor function to the backend and returns
-// when it's queued.
-func (act *Actor) DoAsyncTimeout(action Action, timeout time.Duration) error {
+// DoAsyncWithContext send the actor function to the backend and returns
+// when it's queued. A context allows to cancel the action or add a timeout.
+func (act *Actor) DoAsyncWithContext(ctx context.Context, action Action) error {
 	// Check if we're error free and still working.
-	act.mu.Lock()
-	if act.err != nil {
-		act.mu.Unlock()
-		return act.err
+	if act.err.Load() != nil {
+		return *act.err.Load()
 	}
-	if !act.works.Load().(bool) {
-		act.mu.Unlock()
-		return fmt.Errorf("actor doesn't work anymore")
+	if act.IsDone() {
+		return fmt.Errorf("actor is done")
 	}
-	act.mu.Unlock()
 	// Send action to backend.
+	req := newRequest(ctx, action)
 	select {
-	case act.asyncActions <- action:
-	case <-time.After(timeout):
-		return fmt.Errorf("timeout sending action")
+	case act.asyncRequests <- req:
+	case <-req.ctx.Done():
+		return fmt.Errorf("action timed out or cancelled")
+	case <-act.ctx.Done():
+		return fmt.Errorf("actor timed out or cancelled")
 	}
 	return nil
 }
 
-// DoSync executes the actor function and returns when it's done
-// or it has the default timeout.
+// DoSync executes the actor function and returns when it's done.
 func (act *Actor) DoSync(action Action) error {
-	return act.DoSyncTimeout(action, act.timeout)
+	return act.DoSyncWithContext(context.Background(), action)
 }
 
-// DoSyncTimeout executes the action and returns when it's done
-// or it has a timeout.
-func (act *Actor) DoSyncTimeout(action Action, timeout time.Duration) error {
+// DoSyncWithContext executes the action and returns when it's done.
+// A context allows to cancel the action or add a timeout.
+func (act *Actor) DoSyncWithContext(ctx context.Context, action Action) error {
 	// Check if we're error free and still working.
-	act.mu.Lock()
-	if act.err != nil {
-		act.mu.Unlock()
-		return act.err
+	if act.err.Load() != nil {
+		return *act.err.Load()
 	}
-	if !act.works.Load().(bool) {
-		act.mu.Unlock()
-		return fmt.Errorf("actor doesn't work anymore")
+	if act.IsDone() {
+		return fmt.Errorf("actor is done")
 	}
-	act.mu.Unlock()
-	// Create signal channel for done work and send action. Then
-	// wait for the signal or the timeout.
-	done := make(chan struct{})
-	syncAction := func() {
-		defer close(done)
-		action()
-	}
-	now := time.Now()
+	// Send action to backend.
+	req := newRequest(ctx, action)
 	select {
-	case act.syncActions <- syncAction:
-	case <-time.After(timeout):
-		return fmt.Errorf("timeout sending action")
+	case act.syncRequests <- req:
+	case <-req.ctx.Done():
+		return fmt.Errorf("action timed out or cancelled")
+	case <-ctx.Done():
+		return fmt.Errorf("actor timed out or cancelled")
 	}
-	sent := time.Now()
-	timeout = timeout - sent.Sub(now)
 	select {
-	case <-done:
-	case <-time.After(timeout):
-		if !act.works.Load().(bool) {
-			return act.err
-		}
-		return fmt.Errorf("timeout waiting for done action")
+	case <-req.done:
+	case <-req.ctx.Done():
+		return fmt.Errorf("action timed out or cancelled")
+	case <-act.ctx.Done():
+		return fmt.Errorf("actor timed out or cancelled")
 	}
-	return nil
+	return req.err
+}
+
+// Done returns a channel that is closed when the Actor terminates.
+func (act *Actor) Done() <-chan struct{} {
+	return act.done
+}
+
+func (act *Actor) IsDone() bool {
+	select {
+	case <-act.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // Err returns information if the Actor has an error.
 func (act *Actor) Err() error {
-	act.mu.Lock()
-	defer act.mu.Unlock()
-	return act.err
+	err := act.err.Load()
+	if err == nil {
+		return nil
+	}
+	return *err
 }
 
 // Stop terminates the Actor backend.
 func (act *Actor) Stop() {
-	act.mu.Lock()
-	defer act.mu.Unlock()
-	if !act.works.Load().(bool) {
-		// Already stopped.
+	if act.IsDone() {
 		return
 	}
-	act.works.Store(false)
 	act.cancel()
 }
 
@@ -201,8 +236,11 @@ func (act *Actor) Stop() {
 func (act *Actor) backend(started chan struct{}) {
 	defer act.finalize()
 	close(started)
+
+	act.done = make(chan struct{})
+
 	// Work as long as we're not stopped.
-	for act.works.Load().(bool) {
+	for !act.IsDone() {
 		act.work()
 	}
 }
@@ -213,8 +251,10 @@ func (act *Actor) work() {
 	defer func() {
 		// Check panics and possibly send notification.
 		if reason := recover(); reason != nil {
-			if act.notifier != nil {
-				go act.notifier(reason)
+			err := act.recoverer(reason)
+			if err != nil {
+				act.err.Store(&err)
+				close(act.done)
 			}
 		}
 	}()
@@ -222,21 +262,27 @@ func (act *Actor) work() {
 	for {
 		select {
 		case <-act.ctx.Done():
+			close(act.done)
 			return
-		case action := <-act.asyncActions:
-			action()
-		case action := <-act.syncActions:
-			action()
+		case req := <-act.asyncRequests:
+			req.err = req.execute()
+		case req := <-act.syncRequests:
+			req.err = req.execute()
 		}
 	}
 }
 
 // finalize takes care for a clean loop finalization.
 func (act *Actor) finalize() {
-	act.mu.Lock()
-	defer act.mu.Unlock()
-	if act.finalizer != nil {
-		act.err = act.finalizer(act.err)
+	var ferr error
+	err := act.err.Load()
+	if err != nil {
+		ferr = act.finalizer(*err)
+	} else {
+		ferr = act.finalizer(nil)
+	}
+	if ferr != nil {
+		act.err.Store(&ferr)
 	}
 }
 

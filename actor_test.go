@@ -45,6 +45,25 @@ func TestPureOK(t *testing.T) {
 	assert.NoError(act.Err())
 }
 
+// TestPureDoubleStop verifies stopping an Actor twice.
+func TestPureDoubleStop(t *testing.T) {
+	assert := asserts.NewTesting(t, asserts.FailStop)
+	finalized := make(chan struct{})
+	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+		defer close(finalized)
+		return err
+	}))
+	assert.OK(err)
+	assert.NotNil(act)
+
+	act.Stop()
+	act.Stop()
+
+	<-finalized
+
+	assert.NoError(act.Err())
+}
+
 // TestPureError verifies starting and stopping an Actor.
 // Returning the stop error.
 func TestPureError(t *testing.T) {
@@ -64,9 +83,9 @@ func TestPureError(t *testing.T) {
 	assert.ErrorMatch(act.Err(), "damn")
 }
 
-// TestWithContext verifies starting and stopping an Actor
-// with a context.
-func TestWithContext(t *testing.T) {
+// TestContext verifies starting and stopping an Actor
+// with an external context.
+func TestContext(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	ctx, cancel := context.WithCancel(context.Background())
 	act, err := actor.Go(actor.WithContext(ctx))
@@ -103,7 +122,7 @@ func TestSync(t *testing.T) {
 
 	assert.ErrorMatch(act.DoSync(func() {
 		counter++
-	}), "actor doesn't work anymore")
+	}), "actor is done")
 }
 
 // TestTimeout verifies timout error of a synchronous Action.
@@ -114,31 +133,44 @@ func TestTimeout(t *testing.T) {
 
 	// Scenario: Timeout is shorter than needed time, so error
 	// is returned.
-	err = act.DoSyncTimeout(func() {
-		time.Sleep(5 * time.Second)
-	}, 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	err = act.DoSyncWithContext(ctx, func() {
+		time.Sleep(25 * time.Millisecond)
+	})
+	assert.NoError(err)
+	cancel()
+	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
+	err = act.DoSyncWithContext(ctx, func() {
+		time.Sleep(100 * time.Millisecond)
+	})
+	assert.ErrorMatch(err, ".*action timed out or cancelled.*")
+	cancel()
 
-	assert.ErrorMatch(err, ".*timeout waiting.*")
-
+	time.Sleep(150 * time.Millisecond)
 	act.Stop()
 }
 
-// TestWithTimeout verifies timout error of a synchronous Action
-// after setting it as option.
-func TestWithTimeout(t *testing.T) {
+// TestWithTimeoutContext verifies timout error of a synchronous Action
+// when the Actor is configured with a context timeout.
+func TestWithTimeoutContext(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
-	act, err := actor.Go(actor.WithTimeout(time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	act, err := actor.Go(actor.WithContext(ctx))
 	assert.OK(err)
 
 	// Scenario: Configured timeout is shorter than needed
 	// time, so error is returned.
 	err = act.DoSync(func() {
-		time.Sleep(2 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 	})
-
-	assert.ErrorMatch(err, ".*timeout waiting.*")
+	assert.NoError(err)
+	err = act.DoSync(func() {
+		time.Sleep(100 * time.Millisecond)
+	})
+	assert.ErrorMatch(err, ".*actor timed out or cancelled.*")
 
 	act.Stop()
+	cancel()
 }
 
 // TestAsyncWithQueueCap tests running multiple calls asynchronously.
@@ -164,44 +196,45 @@ func TestAsyncWithQueueCap(t *testing.T) {
 	}()
 
 	// Now start asynchrounous calls.
-	start := time.Now()
+	now := time.Now()
 	for i := 0; i < 128; i++ {
 		assert.OK(act.DoAsync(func() {
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(2 * time.Millisecond)
 			sigs <- struct{}{}
 		}))
 	}
-	enqueued := time.Since(start)
+	enqueued := time.Since(now)
 
 	// Expect signal done to be sent about one second later.
 	<-done
-	duration := time.Since(start)
+	duration := time.Since(now)
 
-	assert.OK((duration - 640*time.Millisecond) > enqueued)
+	assert.OK((duration - 250*time.Millisecond) > enqueued)
 
 	act.Stop()
 }
 
-// TestNotifierOK tests handling panic notifications successfully.
+// TestRecovererOK tests successful handling of panic recoveries.
 func TestNotifierOK(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	counter := 0
-	notified := false
+	recovered := false
 	done := make(chan struct{})
-	notifier := func(reason any) {
+	recoverer := func(reason any) error {
 		defer close(done)
-		notified = true
+		recovered = true
+		return nil
 	}
-	act, err := actor.Go(actor.WithNotifier(notifier))
+	act, err := actor.Go(actor.WithRecoverer(recoverer))
 	assert.OK(err)
 
-	act.DoSyncTimeout(func() {
+	act.DoSync(func() {
 		counter++
 		// Will crash on first call.
 		fmt.Printf("%v", counter/(counter-1))
-	}, time.Second)
+	})
 	<-done
-	assert.True(notified)
+	assert.True(recovered)
 	err = act.DoSync(func() {
 		counter++
 	})
@@ -209,6 +242,32 @@ func TestNotifierOK(t *testing.T) {
 	assert.Equal(counter, 2)
 
 	act.Stop()
+}
+
+// TestRecovererFail tests failing handling of panic recoveries.
+func TestNotifierFail(t *testing.T) {
+	assert := asserts.NewTesting(t, asserts.FailStop)
+	counter := 0
+	recovered := false
+	done := make(chan struct{})
+	recoverer := func(reason any) error {
+		defer close(done)
+		recovered = true
+		return fmt.Errorf("ouch: %v", reason)
+	}
+	act, err := actor.Go(actor.WithRecoverer(recoverer))
+	assert.OK(err)
+
+	act.DoSync(func() {
+		counter++
+		// Will crash on first call.
+		fmt.Printf("%v", counter/(counter-1))
+	})
+	<-done
+	assert.True(recovered)
+
+	assert.True(act.IsDone())
+	assert.ErrorMatch(act.Err(), "ouch:.*")
 }
 
 // EOF

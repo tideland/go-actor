@@ -1,4 +1,4 @@
-// Tideland Go Actor - Interval - Unit Tests
+// Tideland Go Actor - Unit Tests
 //
 // Copyright (C) 2019-2023 Frank Mueller / Tideland / Oldenburg / Germany
 //
@@ -23,9 +23,9 @@ import (
 // TESTS
 //--------------------
 
-// TestIntervalStopActor verifies Interval working and being stopped
-// when the Actor is stopped.
-func TestIntervalStopActor(t *testing.T) {
+// TestPeriodicalStopActor verifies Periodical working and being
+// stopped when the Actor is stopped.
+func TestPeriodicalStopActor(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	finalized := make(chan struct{})
 	counter := 0
@@ -39,8 +39,8 @@ func TestIntervalStopActor(t *testing.T) {
 	assert.OK(err)
 	assert.NotNil(act)
 
-	// Start the Interval.
-	stop, err := act.Interval(10*time.Millisecond, func() {
+	// Start the periodical.
+	stop, err := act.Periodical(10*time.Millisecond, func() {
 		counter++
 	})
 	assert.OK(err)
@@ -62,8 +62,8 @@ func TestIntervalStopActor(t *testing.T) {
 	assert.Equal(counter, 0)
 }
 
-// TestIntervalStopInterval verifies Interval working and being stopped
-// when the Interval is stopped.
+// TestPeriodicalStopInterval verifies Periodical working and being
+// stopped when the periodical is stopped.
 func TestIntervalStopInterval(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	counter := 0
@@ -72,7 +72,7 @@ func TestIntervalStopInterval(t *testing.T) {
 	assert.NotNil(act)
 
 	// Start the Interval.
-	stop, err := act.Interval(10*time.Millisecond, func() {
+	stop, err := act.Periodical(10*time.Millisecond, func() {
 		counter++
 	})
 	assert.OK(err)
@@ -81,7 +81,7 @@ func TestIntervalStopInterval(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	assert.True(counter >= 9, "possibly only 9 due to late interval start")
 
-	// Stop the Interval and check that it doesn't work anymore.
+	// Stop the periodical and check that it doesn't work anymore.
 	counterNow := counter
 	stop()
 
