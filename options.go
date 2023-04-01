@@ -36,7 +36,7 @@ func WithQueueCap(c int) Option {
 		if c < defaultQueueCap {
 			c = defaultQueueCap
 		}
-		act.asyncRequests = make(chan *request, c)
+		act.requests = make(chan *request, c)
 		return nil
 	}
 }
