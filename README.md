@@ -56,7 +56,7 @@ func (c *Counter) Get() (int, error) {
 	}); err != nil {
 		return 0, err
 	}
-return counter, nil
+	return counter, nil
 }
 
 func (c *Counter) Stop() {
