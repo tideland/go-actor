@@ -1,12 +1,13 @@
 # Changelog
 
-### v0.3.0 (2023-04-01)
+### v0.3.0 (2023-04-02)
 
 * Migrated to Go 1.19
 * Changed to single queue for synchronous and asynchonous Actions
 * Separate contexts for Actor and Actions
 * Improved handling of timeouts and cancellations via contexts
 * Imporved external checking if Actor is still running 
+* Added Periodocal() methods for running Actions in intervals
 
 ### v0.2.0 (2022-05-18)
 

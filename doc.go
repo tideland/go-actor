@@ -24,7 +24,11 @@
 //				counter: 0,
 //				act:     act,
 //			}
-//	        c.startAutoIncrement()
+//		    // Increment the counter every second.
+//			interval := 1 * time.Second
+//	    	c.act.Periodical(interval, func() {
+//	        	c.counter++
+//	    	})
 //			return c, nil
 //		}
 //
@@ -48,24 +52,9 @@
 //			c.act.Stop()
 //		}
 //
-// The options for the constructor allow to pass a context, the capacity
-// of the asynchronous queue, a recoverer function and a finalizer function.
-//
-// For periodic execution of Actions using an Actor there are the Periodical methods.
-// They allow the actions to be called at defined intervals. Like in the
-// example above, the startAutoIncrement() method is called in the constructor.
-// It starts a periodical Action which increases the counter every second.
-//
-//	func (c *Counter) startAutoIncrement() {
-//		interval := 1 * time.Second
-//	    c.act.Periodical(interval, func() {
-//	        c.counter++
-//	    })
-//	}
-//
-// For more control Periodical() returns a function which can be called to
-// the individual periodical action. Otherwise it will be stopped togeether
-// with the Actor or based on a passed context.
+// The options for the constructor allow to pass a context for the Actor, the capacity
+// of the Action queue, a recoverer function in case of an Action panic and a finalizer
+// function when the Actor stops.
 package actor // import "tideland.dev/go/actor"
 
 // EOF
