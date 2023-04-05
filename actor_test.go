@@ -143,7 +143,7 @@ func TestTimeout(t *testing.T) {
 	err = act.DoSyncWithContext(ctx, func() {
 		time.Sleep(100 * time.Millisecond)
 	})
-	assert.ErrorMatch(err, ".*action timed out or cancelled.*")
+	assert.ErrorMatch(err, "action.*context deadline exceeded.*")
 	cancel()
 
 	time.Sleep(150 * time.Millisecond)
@@ -167,7 +167,7 @@ func TestWithTimeoutContext(t *testing.T) {
 	err = act.DoSync(func() {
 		time.Sleep(100 * time.Millisecond)
 	})
-	assert.ErrorMatch(err, ".*actor timed out or cancelled.*")
+	assert.ErrorMatch(err, "actor.*context deadline exceeded.*")
 
 	act.Stop()
 	cancel()
