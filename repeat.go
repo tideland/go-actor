@@ -17,13 +17,13 @@ import (
 )
 
 //--------------------
-// PERIODICAL
+// REPEAT
 //--------------------
 
-// PeriodicalWithContext runs an Action in a given interval. It will
+// RepeatWithContext runs an Action in a given interval. It will
 // be done asynchronously until the context is canceled or timeout, the
 // returned stopper function is called or the Actor is stopped.
-func (act *Actor) PeriodicalWithContext(
+func (act *Actor) RepeatWithContext(
 	ctx context.Context,
 	interval time.Duration,
 	action Action) (func(), error) {
@@ -51,13 +51,13 @@ func (act *Actor) PeriodicalWithContext(
 	return cancel, nil
 }
 
-// Periodical runs an Action in a given interval. It will
+// Repeat runs an Action in a given interval. It will
 // be done asynchronously until the returned stopper function
 // is called or the Actor is stopped.
-func (act *Actor) Periodical(
+func (act *Actor) Repeat(
 	interval time.Duration,
 	action Action) (func(), error) {
-	return act.PeriodicalWithContext(context.Background(), interval, action)
+	return act.RepeatWithContext(context.Background(), interval, action)
 }
 
 // EOF

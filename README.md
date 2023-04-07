@@ -11,8 +11,12 @@
 
 **Tideland Go Actor** provides running backend goroutines for the sequential execution
 of anonymous functions following the actor model. The Actors can work asynchronously as
-well as synchronously. Additionally the Actor provides methods for the periodical 
-execution of code under control of an Actor. So background operation can be automated.
+well as synchronously. Additionally the Actor provides methods for the repeated execution 
+of Actions. So background operation can be automated.
+
+The options for the constructor allow to pass a context for the Actor, the capacity
+of the Action queue, a recoverer function in case of an Action panic and a finalizer
+function when the Actor stops.
 
 All together simplifies the implementation of concurrent code.
 
@@ -37,7 +41,7 @@ func NewCounter() (*Counter, error) {
 	}
 	// Increment the counter every second.
 	interval := 1 * time.Second
-	c.act.Periodical(interval, func() {
+	c.act.Repeat(interval, func() {
 		c.counter++
 	})
 	return c, nil
@@ -62,10 +66,6 @@ func (c *Counter) Get() (int, error) {
 func (c *Counter) Stop() {
 	c.act.Stop()
 }
-
-// The options for the constructor allow to pass a context for the Actor, the capacity
-// of the Action queue, a recoverer function in case of an Action panic and a finalizer
-// function when the Actor stops.
 ```
 
 ### Contributors

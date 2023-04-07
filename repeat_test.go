@@ -23,9 +23,9 @@ import (
 // TESTS
 //--------------------
 
-// TestPeriodicalStopActor verifies Periodical working and being
+// TestRepeatStopActor verifies Repeat working and being
 // stopped when the Actor is stopped.
-func TestPeriodicalStopActor(t *testing.T) {
+func TestRepeatStopActor(t *testing.T) {
 	assert := asserts.NewTesting(t, asserts.FailStop)
 	finalized := make(chan struct{})
 	counter := 0
@@ -39,8 +39,8 @@ func TestPeriodicalStopActor(t *testing.T) {
 	assert.OK(err)
 	assert.NotNil(act)
 
-	// Start the periodical.
-	stop, err := act.Periodical(10*time.Millisecond, func() {
+	// Start the repeated action.
+	stop, err := act.Repeat(10*time.Millisecond, func() {
 		counter++
 	})
 	assert.OK(err)
@@ -71,8 +71,8 @@ func TestIntervalStopInterval(t *testing.T) {
 	assert.OK(err)
 	assert.NotNil(act)
 
-	// Start the Interval.
-	stop, err := act.Periodical(10*time.Millisecond, func() {
+	// Start the repeated action.
+	stop, err := act.Repeat(10*time.Millisecond, func() {
 		counter++
 	})
 	assert.OK(err)

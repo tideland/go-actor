@@ -26,7 +26,7 @@
 //			}
 //		    // Increment the counter every second.
 //			interval := 1 * time.Second
-//	    	c.act.Periodical(interval, func() {
+//	    	c.act.Repeat(interval, func() {
 //	        	c.counter++
 //	    	})
 //			return c, nil
