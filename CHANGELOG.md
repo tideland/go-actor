@@ -5,7 +5,7 @@
 * Migrated to Go 1.19
 * Added Repeat() methods for running background Actions in intervals
 * Added context to individual Action calls
-+ Removed Action calls with timeouts
+* Removed Action calls with timeouts
 * Changed to common queue for synchronous and asynchonous Actions
 * Improved handling of timeouts and cancellations via contexts
 * Imporved external checking if Actor is still running
