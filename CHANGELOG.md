@@ -6,7 +6,7 @@
 * Added Repeat() methods for running background Actions in intervals
 * Added context to individual Action calls
 * Removed Action calls with timeouts
-* Changed to common queue for synchronous and asynchonous Actions
+* Changed to common queue for synchronous and asynchronous Actions
 * Improved handling of timeouts and cancellations via contexts
 * Imporved external checking if Actor is still running
 
