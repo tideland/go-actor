@@ -8,7 +8,7 @@
 * Removed Action calls with timeouts
 * Changed to common queue for synchronous and asynchronous Actions
 * Improved handling of timeouts and cancellations via contexts
-* Imporved external checking if Actor is still running
+* Improved external checking if Actor is still running
 
 ### v0.2.0 (2022-05-18)
 
