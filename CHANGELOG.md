@@ -1,5 +1,11 @@
 # Changelog
 
+### v0.4.0 (2025-05-23)
+
+* Migrated to Go 1.24
+* Improved error handling for Actions
+* Added typed result values
+
 ### v0.3.0 (2023-04-08)
 
 * Migrated to Go 1.19
