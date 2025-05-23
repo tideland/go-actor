@@ -1,60 +1,94 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2023 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
-// Package actor supports the simple creation of concurrent applications
-// following the idea of actor models. The work to be done has to be defined
-// as func() inside your public methods or functions and sent to the actor
-// running in the background.
+// Package actor provides a robust implementation of the Actor model pattern for concurrent
+// programming in Go. It enables safe and efficient concurrent operations by ensuring that
+// all actions on shared state are executed sequentially in a dedicated background goroutine.
 //
-//		type Counter struct {
-//			counter int
-//			act     *actor.Actor
+// Key Features:
+//   - Sequential execution of actions in a background goroutine
+//   - Support for both synchronous and asynchronous operations
+//   - Built-in panic recovery and error handling
+//   - Configurable queue capacity for pending actions
+//   - Context-based cancellation and timeout support
+//   - Optional repeating actions with specified intervals
+//   - Clean shutdown with finalizer support
+//
+// Basic Usage:
+//
+//	type Counter struct {
+//		value int
+//		act   *actor.Actor
+//	}
+//
+//	func NewCounter() (*Counter, error) {
+//		act, err := actor.Go()
+//		if err != nil {
+//			return nil, err
 //		}
+//		return &Counter{act: act}, nil
+//	}
 //
-//		func NewCounter() (*Counter, error) {
-//			act, err := actor.Go()
-//			if err != nil {
-//				return nil, err
-//			}
-//			c := &Counter{
-//				counter: 0,
-//				act:     act,
-//			}
-//		    // Increment the counter every second.
-//			interval := 1 * time.Second
-//	    	c.act.Repeat(interval, func() {
-//	        	c.counter++
-//	    	})
-//			return c, nil
-//		}
+//	// Asynchronous increment
+//	func (c *Counter) Increment() error {
+//		return c.act.DoAsync(func() {
+//			c.value++
+//		})
+//	}
 //
-//		func (c *Counter) Incr() error {
-//			return c.act.DoAsync(func() {
-//				c.counter++
-//			})
-//		}
+//	// Synchronous read
+//	func (c *Counter) Value() (int, error) {
+//		var v int
+//		err := c.act.DoSync(func() {
+//			v = c.value
+//		})
+//		return v, err
+//	}
 //
-//		func (c *Counter) Get() (int, error) {
-//			var counter int
-//			if err := c.act.DoSync(func() {
-//				counter = c.counter
-//			}); err != nil {
-//				return 0, err
-//			}
-//			return counter, nil
-//		}
+// Advanced Features:
 //
-//		func (c *Counter) Stop() {
-//			c.act.Stop()
-//		}
+// 1. Context Support:
 //
-// The options for the constructor allow to pass a context for the Actor, the capacity
-// of the Action queue, a recoverer function in case of an Action panic and a finalizer
-// function when the Actor stops.
+//	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+//	defer cancel()
+//	
+//	err := actor.DoSyncWithContext(ctx, func() {
+//		// Long-running operation
+//	})
+//
+// 2. Periodic Actions:
+//
+//	// Execute action every second
+//	actor.Repeat(time.Second, func() {
+//		// Periodic task
+//	})
+//
+// 3. Custom Error Recovery:
+//
+//	act, err := actor.Go(
+//		actor.WithRecoverer(func(reason any) error {
+//			log.Printf("Recovered from panic: %v", reason)
+//			return nil // Continue execution
+//		}),
+//	)
+//
+// 4. Graceful Shutdown:
+//
+//	act, _ := actor.Go(
+//		actor.WithFinalizer(func(err error) error {
+//			// Cleanup resources
+//			return err
+//		}),
+//	)
+//
+// The actor package is particularly useful when building concurrent applications
+// that need to maintain consistent state without explicit locking mechanisms.
+// It helps prevent race conditions and makes concurrent code easier to reason about
+// by centralizing state modifications in a single goroutine.
 package actor // import "tideland.dev/go/actor"
 
 // EOF

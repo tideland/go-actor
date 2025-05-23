@@ -1,2 +1,4 @@
-tideland.dev/go/audit v0.7.0 h1:lr4LkNu7i5qLJuqQ6lUfnt0J09anZNfrdXdB1I9JlTs=
-tideland.dev/go/audit v0.7.0/go.mod h1:Jua+IB3KgAC7fbuZ1YHT7gKhwpiTOcn3Q7AOCQsrro8=
+golang.org/x/exp v0.0.0-20240325151524-a685a6edb6d8 h1:aAcj0Da7eBAtrTp03QXWvm88pSyOt+UgdZw2BFZ+lEw=
+golang.org/x/exp v0.0.0-20240325151524-a685a6edb6d8/go.mod h1:CQ1k9gNrJ50XIzaKCRR2hssIjF07kZFEiieALBM/ARQ=
+tideland.dev/go/asserts v0.2.1 h1:All0fJPgEwtl1IHFTl52aY/K8DrSJbvpqAu8aZAjtgQ=
+tideland.dev/go/asserts v0.2.1/go.mod h1:laqSQiIavjBDGZJqlo+mj7uCoyL8tUd+s1RKdqcpJYI=

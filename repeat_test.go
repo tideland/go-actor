@@ -1,6 +1,6 @@
 // Tideland Go Actor - Unit Tests
 //
-// Copyright (C) 2019-2023 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"tideland.dev/go/actor"
-	"tideland.dev/go/audit/asserts"
+	"tideland.dev/go/asserts/verify"
 )
 
 //--------------------
@@ -26,7 +26,6 @@ import (
 // TestRepeatStopActor verifies Repeat working and being
 // stopped when the Actor is stopped.
 func TestRepeatStopActor(t *testing.T) {
-	assert := asserts.NewTesting(t, asserts.FailStop)
 	finalized := make(chan struct{})
 	counter := 0
 	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
@@ -36,57 +35,56 @@ func TestRepeatStopActor(t *testing.T) {
 
 		return err
 	}))
-	assert.OK(err)
-	assert.NotNil(act)
+	verify.NoError(t, err)
+	verify.NotNil(t, act)
 
 	// Start the repeated action.
 	stop, err := act.Repeat(10*time.Millisecond, func() {
 		counter++
 	})
-	assert.OK(err)
-	assert.NotNil(stop)
+	verify.NoError(t, err)
+	verify.NotNil(t, stop)
 
 	time.Sleep(100 * time.Millisecond)
-	assert.True(counter >= 9, "possibly only 9 due to late interval start")
+	verify.True(t, counter >= 9, "possibly only 9 due to late interval start")
 
 	// Stop the Actor and check the finalization.
 	act.Stop()
 
 	<-finalized
 
-	assert.NoError(act.Err())
-	assert.Equal(counter, 0)
+	verify.NoError(t, act.Err())
+	verify.Equal(t, counter, 0)
 
 	// Check if the Interval is stopped too.
 	time.Sleep(100 * time.Millisecond)
-	assert.Equal(counter, 0)
+	verify.Equal(t, counter, 0)
 }
 
-// TestPeriodicalStopInterval verifies Periodical working and being
-// stopped when the periodical is stopped.
-func TestIntervalStopInterval(t *testing.T) {
-	assert := asserts.NewTesting(t, asserts.FailStop)
+// TestRepeatStopInterval verifies Repeat working and being
+// stopped when the repeat is stopped.
+func TestRepeatStopInterval(t *testing.T) {
 	counter := 0
 	act, err := actor.Go()
-	assert.OK(err)
-	assert.NotNil(act)
+	verify.NoError(t, err)
+	verify.NotNil(t, act)
 
 	// Start the repeated action.
 	stop, err := act.Repeat(10*time.Millisecond, func() {
 		counter++
 	})
-	assert.OK(err)
-	assert.NotNil(stop)
+	verify.NoError(t, err)
+	verify.NotNil(t, stop)
 
 	time.Sleep(100 * time.Millisecond)
-	assert.True(counter >= 9, "possibly only 9 due to late interval start")
+	verify.True(t, counter >= 9, "possibly only 9 due to late interval start")
 
-	// Stop the periodical and check that it doesn't work anymore.
+	// Stop the repeat and check that it doesn't work anymore.
 	counterNow := counter
 	stop()
 
 	time.Sleep(100 * time.Millisecond)
-	assert.Equal(counter, counterNow)
+	verify.Equal(t, counter, counterNow)
 
 	act.Stop()
 }

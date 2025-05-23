@@ -1,6 +1,6 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2023 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
@@ -16,16 +16,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-)
-
-//--------------------
-// CONSTANTS
-//--------------------
-
-const (
-	// defaultQueueCap is the minimum and default capacity
-	// of the async actions queue.
-	defaultQueueCap = 256
 )
 
 //--------------------

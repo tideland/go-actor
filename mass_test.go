@@ -1,6 +1,6 @@
 // Tideland Go Actor - Unit Tests
 //
-// Copyright (C) 2019-2023 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"tideland.dev/go/audit/asserts"
+	"tideland.dev/go/asserts/verify"
 
 	"tideland.dev/go/actor"
 )
@@ -27,52 +27,50 @@ import (
 
 // TestMass verifies the starting and stopping an Actor.
 func TestMass(t *testing.T) {
-	assert := asserts.NewTesting(t, asserts.FailStop)
 	pps := make([]*PingPong, 1000)
-	for i := 0; i < len(pps); i++ {
+	for i := range pps {
 		pps[i] = NewPingPong(pps)
 	}
-	// Let's start the ping pong party.
-	for i := 0; i < 5; i++ {
+	// Let's start the ping pong party
+	for range 5 {
 		n := rand.Intn(len(pps))
 		pps[n].Ping()
 		n = rand.Intn(len(pps))
 		pps[n].Pong()
 	}
-	// Let's wait one seconds before stopping.
+	// Let's wait one seconds before stopping
 	time.Sleep(1 * time.Second)
-	// Let's check some random ping pong pairs.
+	// Let's check some random ping pong pairs
 	for _, pp := range pps {
 		pings, pongs := pp.PingPongs()
-		assert.True(pings > 0)
-		assert.True(pongs > 0)
+		verify.True(t, pings > 0)
+		verify.True(t, pongs > 0)
 		pp.Stop()
 	}
 }
 
 // TestPerformance verifies the starting and stopping an Actor.
 func TestPerformance(t *testing.T) {
-	assert := asserts.NewTesting(t, asserts.FailStop)
 	finalized := make(chan struct{})
 	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
 		defer close(finalized)
 		return err
 	}))
-	assert.OK(err)
-	assert.NotNil(act)
+	verify.NoError(t, err)
+	verify.NotNil(t, act)
 
 	now := time.Now()
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		act.DoAsync(func() {})
 	}
 	duration := time.Since(now)
-	assert.True(duration < 100*time.Millisecond)
+	verify.True(t, duration < 100*time.Millisecond)
 
 	act.Stop()
 
 	<-finalized
 
-	assert.NoError(act.Err())
+	verify.NoError(t, act.Err())
 }
 
 //--------------------
