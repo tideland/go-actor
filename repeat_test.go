@@ -28,13 +28,13 @@ import (
 func TestRepeatStopActor(t *testing.T) {
 	finalized := make(chan struct{})
 	counter := 0
-	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+	cfg := actor.DefaultConfig()
+	cfg.Finalizer = func(err error) error {
 		defer close(finalized)
-
 		counter = 0
-
 		return err
-	}))
+	}
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
 
@@ -54,7 +54,7 @@ func TestRepeatStopActor(t *testing.T) {
 	<-finalized
 
 	verify.NoError(t, act.Err())
-	verify.Equal(t, counter, 0)
+	verify.Equal(t,counter, 0)
 
 	// Check if the Interval is stopped too.
 	time.Sleep(100 * time.Millisecond)
@@ -65,7 +65,7 @@ func TestRepeatStopActor(t *testing.T) {
 // stopped when the repeat is stopped.
 func TestRepeatStopInterval(t *testing.T) {
 	counter := 0
-	act, err := actor.Go()
+	act, err := actor.Go(actor.DefaultConfig())
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
 

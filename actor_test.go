@@ -30,10 +30,12 @@ import (
 // TestPureOK verifies the starting and stopping an Actor.
 func TestPureOK(t *testing.T) {
 	finalized := make(chan struct{})
-	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+	cfg := actor.DefaultConfig()
+	cfg.Finalizer = func(err error) error {
 		defer close(finalized)
 		return err
-	}))
+	}
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
 
@@ -47,12 +49,14 @@ func TestPureOK(t *testing.T) {
 // TestPureDoubleStop verifies stopping an Actor twice.
 func TestPureDoubleStop(t *testing.T) {
 	finalized := make(chan struct{})
-	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+	cfg := actor.DefaultConfig()
+	cfg.Finalizer = func(err error) error {
 		defer close(finalized)
 		return err
-	}))
+	}
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
-	verify.NotNil(t,act)
+	verify.NotNil(t, act)
 
 	act.Stop()
 	act.Stop()
@@ -66,10 +70,12 @@ func TestPureDoubleStop(t *testing.T) {
 // Returning the stop error.
 func TestPureError(t *testing.T) {
 	finalized := make(chan struct{})
-	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+	cfg := actor.DefaultConfig()
+	cfg.Finalizer = func(err error) error {
 		defer close(finalized)
 		return errors.New("damn")
-	}))
+	}
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
 
@@ -84,7 +90,9 @@ func TestPureError(t *testing.T) {
 // with an external context.
 func TestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	act, err := actor.Go(actor.WithContext(ctx))
+	cfg := actor.DefaultConfig()
+	cfg.Context = ctx
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
 
@@ -95,10 +103,12 @@ func TestContext(t *testing.T) {
 // TestSync verifies synchronous calls.
 func TestSync(t *testing.T) {
 	finalized := make(chan struct{})
-	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+	cfg := actor.DefaultConfig()
+	cfg.Finalizer = func(err error) error {
 		defer close(finalized)
 		return err
-	}))
+	}
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 
 	counter := 0
@@ -122,7 +132,7 @@ func TestSync(t *testing.T) {
 
 // TestTimeout verifies timout error of a synchronous Action.
 func TestTimeout(t *testing.T) {
-	act, err := actor.Go()
+	act, err := actor.Go(actor.DefaultConfig())
 	verify.NoError(t, err)
 
 	// Scenario: Timeout is shorter than needed time, so error
@@ -148,7 +158,9 @@ func TestTimeout(t *testing.T) {
 // when the Actor is configured with a context timeout.
 func TestWithTimeoutContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	act, err := actor.Go(actor.WithContext(ctx))
+	cfg := actor.DefaultConfig()
+	cfg.Context = ctx
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 
 	// Scenario: Configured timeout is shorter than needed
@@ -168,7 +180,9 @@ func TestWithTimeoutContext(t *testing.T) {
 
 // TestAsyncWithQueueCap tests running multiple calls asynchronously.
 func TestAsyncWithQueueCap(t *testing.T) {
-	act, err := actor.Go(actor.WithQueueCap(128))
+	cfg := actor.DefaultConfig()
+	cfg.QueueCap = 128
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 
 	sigs := make(chan struct{}, 1)
@@ -190,7 +204,7 @@ func TestAsyncWithQueueCap(t *testing.T) {
 	// Now start asynchrounous calls.
 	now := time.Now()
 	for i := 0; i < 128; i++ {
-		verify.NoError(t,act.DoAsync(func() {
+		verify.NoError(t, act.DoAsync(func() {
 			time.Sleep(2 * time.Millisecond)
 			sigs <- struct{}{}
 		}))
@@ -211,12 +225,13 @@ func TestRecovererOK(t *testing.T) {
 	counter := 0
 	recovered := false
 	done := make(chan struct{})
-	recoverer := func(reason any) error {
+	cfg := actor.DefaultConfig()
+	cfg.Recoverer = func(reason any) error {
 		defer close(done)
 		recovered = true
 		return nil
 	}
-	act, err := actor.Go(actor.WithRecoverer(recoverer))
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 
 	act.DoSync(func() {
@@ -240,12 +255,13 @@ func TestRecovererFail(t *testing.T) {
 	counter := 0
 	recovered := false
 	done := make(chan struct{})
-	recoverer := func(reason any) error {
+	cfg := actor.DefaultConfig()
+	cfg.Recoverer = func(reason any) error {
 		defer close(done)
 		recovered = true
 		return fmt.Errorf("ouch: %v", reason)
 	}
-	act, err := actor.Go(actor.WithRecoverer(recoverer))
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 
 	act.DoSync(func() {

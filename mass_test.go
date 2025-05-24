@@ -28,19 +28,19 @@ import (
 // TestMass verifies the starting and stopping an Actor.
 func TestMass(t *testing.T) {
 	pps := make([]*PingPong, 1000)
-	for i := range pps {
+	for i := 0; i < len(pps); i++ {
 		pps[i] = NewPingPong(pps)
 	}
-	// Let's start the ping pong party
-	for range 5 {
+	// Let's start the ping pong party.
+	for i := 0; i < 5; i++ {
 		n := rand.Intn(len(pps))
 		pps[n].Ping()
 		n = rand.Intn(len(pps))
 		pps[n].Pong()
 	}
-	// Let's wait one seconds before stopping
+	// Let's wait one seconds before stopping.
 	time.Sleep(1 * time.Second)
-	// Let's check some random ping pong pairs
+	// Let's check some random ping pong pairs.
 	for _, pp := range pps {
 		pings, pongs := pp.PingPongs()
 		verify.True(t, pings > 0)
@@ -52,15 +52,17 @@ func TestMass(t *testing.T) {
 // TestPerformance verifies the starting and stopping an Actor.
 func TestPerformance(t *testing.T) {
 	finalized := make(chan struct{})
-	act, err := actor.Go(actor.WithFinalizer(func(err error) error {
+	cfg := actor.DefaultConfig()
+	cfg.Finalizer = func(err error) error {
 		defer close(finalized)
 		return err
-	}))
+	}
+	act, err := actor.Go(cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
 
 	now := time.Now()
-	for range 10000 {
+	for i := 0; i < 10000; i++ {
 		act.DoAsync(func() {})
 	}
 	duration := time.Since(now)
@@ -91,7 +93,9 @@ func NewPingPong(pps []*PingPong) *PingPong {
 		pings: 0,
 		pongs: 0,
 	}
-	act, err := actor.Go(actor.WithQueueCap(256))
+	cfg := actor.DefaultConfig()
+	cfg.QueueCap = 256
+	act, err := actor.Go(cfg)
 	if err != nil {
 		panic(err)
 	}

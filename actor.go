@@ -72,53 +72,47 @@ func (req *request) execute() {
 	}
 }
 
-// Actor introduces the actor model, where call simply are executed
+// Actor introduces the actor model, where calls are executed
 // sequentially in a backend goroutine.
 type Actor struct {
 	ctx       context.Context
-	cancel    func()
+	cancel    context.CancelFunc
 	requests  chan *request
 	recoverer Recoverer
 	finalizer Finalizer
 	err       atomic.Pointer[error]
 	done      chan struct{}
+	status    atomic.Bool
 }
 
-// Go starts an Actor with the given options.
-func Go(options ...Option) (*Actor, error) {
-	// Init with options.
-	act := &Actor{
-		ctx: context.Background(),
+// Go starts an Actor with the given configuration.
+func Go(cfg Config) (*Actor, error) {
+	// Validate configuration.
+	if err := cfg.Validate(); err != nil {
+		return nil, NewError("Go", err, ErrInvalid)
 	}
-	for _, option := range options {
-		if err := option(act); err != nil {
-			return nil, err
-		}
-	}
-	// Ensure default settings.
-	act.ctx, act.cancel = context.WithCancel(act.ctx)
-	if act.requests == nil {
-		act.requests = make(chan *request, defaultQueueCap)
-	}
-	if act.recoverer == nil {
-		act.recoverer = func(reason any) error {
-			return fmt.Errorf("panic during actor action: %v", reason)
-		}
-	}
-	if act.finalizer == nil {
-		act.finalizer = func(err error) error { return err }
-	}
-	// Start the backend, wait for it to be ready.
-	started := make(chan struct{})
 
+	// Create actor with validated config.
+	act := &Actor{
+		requests:  make(chan *request, cfg.QueueCap),
+		recoverer: cfg.Recoverer,
+		finalizer: cfg.Finalizer,
+	}
+
+	// Set up context with cancellation.
+	act.ctx, act.cancel = context.WithCancel(cfg.Context)
+
+	// Start the backend.
+	started := make(chan struct{})
 	go act.backend(started)
 
+	// Wait for backend to start.
 	select {
 	case <-started:
+		return act, nil
 	case <-time.After(time.Second):
-		return nil, fmt.Errorf("actor backend did not start")
+		return nil, NewError("Go", fmt.Errorf("backend did not start"), ErrTimeout)
 	}
-	return act, nil
 }
 
 // DoAsync sends the actor function to the backend goroutine and returns
@@ -127,7 +121,7 @@ func (act *Actor) DoAsync(action Action) error {
 	return act.DoAsyncWithContext(context.Background(), action)
 }
 
-// DoAsyncWithContext send the actor function to the backend and returns
+// DoAsyncWithContext sends the actor function to the backend and returns
 // when it's queued. A context allows to cancel the action or add a timeout.
 func (act *Actor) DoAsyncWithContext(ctx context.Context, action Action) error {
 	req := newRequest(ctx, action)
@@ -158,12 +152,7 @@ func (act *Actor) Done() <-chan struct{} {
 // IsDone allows to simply check if the Actor is done in a select
 // or if statement.
 func (act *Actor) IsDone() bool {
-	select {
-	case <-act.done:
-		return true
-	default:
-		return false
-	}
+	return act.status.Load()
 }
 
 // Err returns information if the Actor has an error.
@@ -190,15 +179,15 @@ func (act *Actor) send(req *request) error {
 		return *act.err.Load()
 	}
 	if act.IsDone() {
-		return fmt.Errorf("actor is done")
+		return NewError("send", fmt.Errorf("actor is done"), ErrShutdown)
 	}
 	// Send the request to the backend.
 	select {
 	case act.requests <- req:
 	case <-req.ctx.Done():
-		return fmt.Errorf("action context sending: %v", req.ctx.Err())
+		return NewError("send", fmt.Errorf("action context: %v", req.ctx.Err()), ErrCanceled)
 	case <-act.ctx.Done():
-		return fmt.Errorf("actor context sending: %v", act.ctx.Err())
+		return NewError("send", fmt.Errorf("actor context: %v", act.ctx.Err()), ErrShutdown)
 	}
 	return nil
 }
@@ -208,11 +197,14 @@ func (act *Actor) wait(req *request) error {
 	select {
 	case <-req.done:
 	case <-req.ctx.Done():
-		return fmt.Errorf("action context waiting: %v", req.ctx.Err())
+		return NewError("wait", fmt.Errorf("action context: %v", req.ctx.Err()), ErrCanceled)
 	case <-act.ctx.Done():
-		return fmt.Errorf("actor context waiting: %v", act.ctx.Err())
+		return NewError("wait", fmt.Errorf("actor context: %v", act.ctx.Err()), ErrShutdown)
 	}
-	return req.err
+	if req.err != nil {
+		return NewError("wait", req.err, ErrCanceled)
+	}
+	return nil
 }
 
 // backend runs the goroutine of the Actor.
@@ -237,6 +229,7 @@ func (act *Actor) work() {
 			err := act.recoverer(reason)
 			if err != nil {
 				act.err.Store(&err)
+				act.status.Store(true)
 				close(act.done)
 			}
 		}
@@ -245,6 +238,7 @@ func (act *Actor) work() {
 	for {
 		select {
 		case <-act.ctx.Done():
+			act.status.Store(true)
 			close(act.done)
 			return
 		case req := <-act.requests:
