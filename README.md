@@ -9,17 +9,15 @@
 
 ## Description
 
-**Tideland Go Actor** provides a robust implementation of the Actor model pattern for Go applications. The package ensures thread-safe operations by executing all actions sequentially in a dedicated background goroutine. This approach eliminates the need for explicit locking mechanisms while providing a clean and intuitive API for concurrent programming.
+**Tideland Go Actor** provides a lightweight implementation of the Actor model pattern for Go applications. The package ensures thread-safe operations by executing all actions sequentially in a dedicated background goroutine, eliminating the need for explicit locking mechanisms.
 
 ### Key Features
 
 - **Sequential Execution**: All actions run in a dedicated goroutine
-- **Flexible Operation Modes**: Support for both synchronous and asynchronous operations
-- **Built-in Error Handling**: Automatic panic recovery with customizable recovery logic
-- **Context Support**: Timeout and cancellation support via Go contexts
-- **Periodic Tasks**: Easy setup of recurring actions
-- **Graceful Shutdown**: Clean termination with optional finalizer functions
-- **Queue Management**: Configurable action queue capacity
+- **Operation Modes**: Both synchronous and asynchronous execution
+- **Timeout Control**: Global and per-action timeouts
+- **Queue Monitoring**: Track queue status and capacity
+- **Error Handling**: Built-in panic recovery
 - **Zero Dependencies**: Pure Go implementation
 
 ## Installation
@@ -41,6 +39,8 @@ type Counter struct {
 func NewCounter() (*Counter, error) {
     // Create actor with default configuration
     cfg := actor.DefaultConfig()
+    cfg.ActionTimeout = 5 * time.Second  // Default timeout for all actions
+    
     act, err := actor.Go(cfg)
     if err != nil {
         return nil, err
@@ -48,14 +48,14 @@ func NewCounter() (*Counter, error) {
     return &Counter{act: act}, nil
 }
 
-// Increment asynchronously increases the counter
+// Increment asynchronously with timeout
 func (c *Counter) Increment() error {
-    return c.act.DoAsync(func() {
+    return c.act.DoAsyncTimeout(time.Second, func() {
         c.value++
     })
 }
 
-// Value synchronously retrieves the current count
+// Value returns current count synchronously
 func (c *Counter) Value() (int, error) {
     var v int
     err := c.act.DoSync(func() {
@@ -72,52 +72,20 @@ func (c *Counter) Stop() {
 
 ## Configuration
 
-The actor package uses a `Config` struct for configuration:
-
-```go
-type Config struct {
-    // Controls actor lifetime
-    Context context.Context
-
-    // Capacity of action queue (must be positive)
-    QueueCap int
-
-    // Called when panic occurs during action execution
-    Recoverer func(reason any) error
-
-    // Called when actor stops
-    Finalizer func(err error) error
-}
-```
-
-### Default Configuration
-
-Get default configuration with `DefaultConfig()`:
-
-```go
-cfg := actor.DefaultConfig()  // Returns Config with:
-// - Context:   context.Background()
-// - QueueCap:  256
-// - Recoverer: Default panic -> error wrapper
-// - Finalizer: Returns error unchanged
-```
-
-### Custom Configuration
-
-Example with custom configuration:
+The actor package uses a `Config` struct for initialization:
 
 ```go
 cfg := actor.Config{
-    Context:  ctx,               // Custom context
-    QueueCap: 1000,             // Larger queue
-    Recoverer: func(r any) error {
+    Context:       ctx,               // Controls actor lifetime
+    QueueCap:      1000,             // Action queue capacity
+    ActionTimeout: 5 * time.Second,   // Default timeout for actions
+    Recoverer:     func(r any) error {
         log.Printf("Panic: %v", r)
-        return nil              // Continue execution
+        return nil
     },
-    Finalizer: func(err error) error {
-        // Cleanup resources
+    Finalizer:     func(err error) error {
         if err != nil {
-            log.Printf("Stopped with: %v", err)
+            log.Printf("Stopped: %v", err)
         }
         return err
     },
@@ -126,54 +94,49 @@ cfg := actor.Config{
 act, err := actor.Go(cfg)
 ```
 
-## Advanced Usage
+## Queue Monitoring
 
-### Context Support
-
-Control operation timeouts and cancellation:
+Monitor queue status to prevent overload:
 
 ```go
-ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-defer cancel()
-
-err := c.act.DoSyncWithContext(ctx, func() {
-    // Long-running operation
-})
+status := act.QueueStatus()
+fmt.Printf("Queue: %d/%d (full: %v)\n", 
+    status.Length, status.Capacity, status.IsFull)
 ```
 
-### Periodic Tasks
+## Timeout Handling
 
-Automatically execute actions at intervals:
+Three ways to handle timeouts:
 
 ```go
-func NewAutoCounter() (*Counter, error) {
-    cfg := actor.DefaultConfig()
-    act, err := actor.Go(cfg)
-    if err != nil {
-        return nil, err
-    }
-    c := &Counter{act: act}
-    
-    // Increment every second
-    c.act.Repeat(time.Second, func() {
-        c.value++
-    })
-    
-    return c, nil
-}
+// 1. Global timeout in configuration
+cfg := actor.DefaultConfig()
+cfg.ActionTimeout = 5 * time.Second
+
+// 2. Per-action timeout
+err := act.DoSyncTimeout(2*time.Second, func() {
+    // Operation with 2s timeout
+})
+
+// 3. Context timeout
+ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+defer cancel()
+err = act.DoSyncWithContext(ctx, func() {
+    // Operation with context timeout
+})
 ```
 
 ## Best Practices
 
 1. **Keep Actions Small**: Design actions to be quick and focused
-2. **Avoid Blocking**: Don't block indefinitely inside actions
-3. **Error Handling**: Always check errors returned from actor methods
-4. **Resource Management**: Always call `Stop()` when done with an actor
-5. **Context Usage**: Use contexts for timeouts and cancellation
+2. **Use Timeouts**: Set appropriate timeouts to prevent hanging
+3. **Monitor Queue**: Check queue status to prevent overload
+4. **Error Handling**: Always check returned errors
+5. **Resource Management**: Call `Stop()` when done
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
@@ -182,9 +145,3 @@ This project is licensed under the BSD License - see the [LICENSE](LICENSE) file
 ## Contributors
 
 - Frank Mueller (https://github.com/themue / https://github.com/tideland / https://themue.dev)
-
-## Support
-
-If you find this project helpful, please consider giving it a ⭐️ on GitHub!
-
-For updates and announcements, follow us on Twitter [@tidelanddev](https://twitter.com/tidelanddev).

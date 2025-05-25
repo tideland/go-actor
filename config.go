@@ -14,6 +14,7 @@ package actor // import "tideland.dev/go/actor"
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 //--------------------
@@ -40,15 +41,21 @@ type Config struct {
 	// If nil, a default finalizer will be used that returns
 	// the error unchanged.
 	Finalizer Finalizer
+
+	// ActionTimeout defines a default timeout for all actions.
+	// If set to 0 (default), no timeout is applied.
+	// Can be overridden per action using DoSyncTimeout or DoAsyncTimeout.
+	ActionTimeout time.Duration
 }
 
 // DefaultConfig returns a Config with default values.
 func DefaultConfig() Config {
 	return Config{
-		Context:   context.Background(),
-		QueueCap:  256,
-		Recoverer: defaultRecoverer,
-		Finalizer: defaultFinalizer,
+		Context:       context.Background(),
+		QueueCap:      256,
+		Recoverer:     defaultRecoverer,
+		Finalizer:     defaultFinalizer,
+		ActionTimeout: 0, // no default timeout
 	}
 }
 

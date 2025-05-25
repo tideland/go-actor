@@ -13,10 +13,9 @@
 //   - Sequential execution of actions in a background goroutine
 //   - Support for both synchronous and asynchronous operations
 //   - Built-in panic recovery and error handling
-//   - Context-based cancellation and timeout support
-//   - Periodic tasks with configurable intervals
-//   - Graceful shutdown with finalizer support
-//   - Configurable action queue capacity
+//   - Context-based cancellation support
+//   - Action timeouts (global and per-action)
+//   - Queue monitoring capabilities
 //
 // Basic Usage:
 //
@@ -41,48 +40,63 @@
 //		})
 //	}
 //
-//	// Synchronous read
+//	// Synchronous read with timeout
 //	func (c *Counter) Value() (int, error) {
 //		var v int
-//		err := c.act.DoSync(func() {
+//		err := c.act.DoSyncTimeout(time.Second, func() {
 //			v = c.value
 //		})
 //		return v, err
 //	}
 //
-// Advanced Configuration:
+// Configuration:
 //
 //	cfg := actor.Config{
-//		Context:   ctx,              // Custom context for lifetime control
-//		QueueCap:  1000,            // Set queue capacity to 1000 actions
+//		Context:       ctx,               // Custom context
+//		QueueCap:      1000,             // Queue capacity
+//		ActionTimeout: 5 * time.Second,   // Default timeout
 //		Recoverer: func(r any) error {
-//			log.Printf("Recovered from: %v", r)
-//			return nil  // Continue execution
+//			log.Printf("Panic: %v", r)
+//			return nil
 //		},
 //		Finalizer: func(err error) error {
-//			// Cleanup when actor stops
 //			if err != nil {
-//				log.Printf("Actor stopped with: %v", err)
+//				log.Printf("Stopped with: %v", err)
 //			}
 //			return err
 //		},
 //	}
-//	act, err := actor.Go(cfg)
 //
-// The Config struct allows customizing:
-//   - Context: Controls the actor's lifetime
-//   - QueueCap: Size of the action queue (must be positive)
-//   - Recoverer: Custom panic recovery function
-//   - Finalizer: Cleanup function called when actor stops
+// Queue Monitoring:
 //
-// Default configuration values are provided by actor.DefaultConfig():
-//   - Context: context.Background()
-//   - QueueCap: 256
-//   - Recoverer: Wraps panic value in error
-//   - Finalizer: Returns error unchanged
+//	status := act.QueueStatus()
+//	if status.IsFull {
+//		log.Printf("Queue at capacity: %d/%d", status.Length, status.Capacity)
+//	}
 //
-// For more examples and detailed information, see the package documentation
-// and examples in the repository.
+// Timeout Handling:
+//
+//	// Global timeout via config
+//	cfg := actor.DefaultConfig()
+//	cfg.ActionTimeout = 5 * time.Second
+//	act, _ := actor.Go(cfg)
+//
+//	// Per-action timeout
+//	err := act.DoSyncTimeout(time.Second, func() {
+//		// Operation with 1s timeout
+//	})
+//
+//	// Context timeout
+//	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+//	defer cancel()
+//	err = act.DoSyncWithContext(ctx, func() {
+//		// Operation with context timeout
+//	})
+//
+// The actor package is particularly useful when building concurrent applications
+// that need to maintain consistent state without explicit locking mechanisms.
+// It helps prevent race conditions and makes concurrent code easier to reason about
+// by centralizing state modifications in a single goroutine.
 package actor // import "tideland.dev/go/actor"
 
 // EOF

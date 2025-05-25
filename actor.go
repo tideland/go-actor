@@ -74,14 +74,22 @@ func (req *request) execute() {
 
 // Actor introduces the actor model, where calls are executed
 // sequentially in a backend goroutine.
+// QueueStatus provides information about the actor's request queue
+type QueueStatus struct {
+	Length    int  // Current number of queued requests
+	Capacity  int  // Maximum queue capacity
+	IsFull    bool // Whether queue is at capacity
+}
+
 type Actor struct {
 	ctx       context.Context
-	cancel    context.CancelFunc
+	cancel    func()
 	requests  chan *request
 	recoverer Recoverer
 	finalizer Finalizer
 	err       atomic.Pointer[error]
 	done      chan struct{}
+	timeout   time.Duration // default timeout for actions from config
 	status    atomic.Bool
 }
 
@@ -97,6 +105,7 @@ func Go(cfg Config) (*Actor, error) {
 		requests:  make(chan *request, cfg.QueueCap),
 		recoverer: cfg.Recoverer,
 		finalizer: cfg.Finalizer,
+		timeout:   cfg.ActionTimeout,
 	}
 
 	// Set up context with cancellation.
@@ -172,6 +181,29 @@ func (act *Actor) Stop() {
 	act.cancel()
 }
 
+// QueueStatus returns the current status of the action queue
+func (act *Actor) QueueStatus() QueueStatus {
+	return QueueStatus{
+		Length:   len(act.requests),
+		Capacity: cap(act.requests),
+		IsFull:   len(act.requests) == cap(act.requests),
+	}
+}
+
+// DoSyncTimeout executes the action with a specific timeout
+func (act *Actor) DoSyncTimeout(timeout time.Duration, action Action) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return act.DoSyncWithContext(ctx, action)
+}
+
+// DoAsyncTimeout sends the action to the backend with a specific timeout
+func (act *Actor) DoAsyncTimeout(timeout time.Duration, action Action) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return act.DoAsyncWithContext(ctx, action)
+}
+
 // send sends a request to the backend.
 func (act *Actor) send(req *request) error {
 	// Check if we're error free and still working.
@@ -179,15 +211,21 @@ func (act *Actor) send(req *request) error {
 		return *act.err.Load()
 	}
 	if act.IsDone() {
-		return NewError("send", fmt.Errorf("actor is done"), ErrShutdown)
+		return fmt.Errorf("actor is done")
+	}
+	// Apply action timeout if configured
+	if act.timeout > 0 && req.ctx == context.Background() {
+		var cancel context.CancelFunc
+		req.ctx, cancel = context.WithTimeout(req.ctx, act.timeout)
+		defer cancel()
 	}
 	// Send the request to the backend.
 	select {
 	case act.requests <- req:
 	case <-req.ctx.Done():
-		return NewError("send", fmt.Errorf("action context: %v", req.ctx.Err()), ErrCanceled)
+		return fmt.Errorf("action context sending: %v", req.ctx.Err())
 	case <-act.ctx.Done():
-		return NewError("send", fmt.Errorf("actor context: %v", act.ctx.Err()), ErrShutdown)
+		return fmt.Errorf("actor context sending: %v", act.ctx.Err())
 	}
 	return nil
 }
