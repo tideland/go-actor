@@ -5,7 +5,7 @@
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
-package actor // import "tideland.dev/go/actor"
+package actor
 
 //--------------------
 // IMPORTS
@@ -76,9 +76,9 @@ func (req *request) execute() {
 // sequentially in a backend goroutine.
 // QueueStatus provides information about the actor's request queue
 type QueueStatus struct {
-	Length    int  // Current number of queued requests
-	Capacity  int  // Maximum queue capacity
-	IsFull    bool // Whether queue is at capacity
+	Length   int  // Current number of queued requests
+	Capacity int  // Maximum queue capacity
+	IsFull   bool // Whether queue is at capacity
 }
 
 type Actor struct {

@@ -5,7 +5,7 @@
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
-package actor // import "tideland.dev/go/actor"
+package actor
 
 //--------------------
 // IMPORTS

@@ -97,6 +97,6 @@
 // that need to maintain consistent state without explicit locking mechanisms.
 // It helps prevent race conditions and makes concurrent code easier to reason about
 // by centralizing state modifications in a single goroutine.
-package actor // import "tideland.dev/go/actor"
+package actor
 
 // EOF
