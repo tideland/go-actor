@@ -1,24 +1,16 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
 package actor
 
-//--------------------
-// IMPORTS
-//--------------------
-
 import (
 	"context"
 	"time"
 )
-
-//--------------------
-// REPEAT
-//--------------------
 
 // RepeatWithContext runs an Action in a given interval. It will
 // be done asynchronously until the context is canceled or timeout, the
@@ -59,5 +51,3 @@ func (act *Actor) Repeat(
 	action Action) (func(), error) {
 	return act.RepeatWithContext(context.Background(), interval, action)
 }
-
-// EOF

@@ -1,6 +1,6 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
@@ -98,5 +98,3 @@
 // It helps prevent race conditions and makes concurrent code easier to reason about
 // by centralizing state modifications in a single goroutine.
 package actor
-
-// EOF

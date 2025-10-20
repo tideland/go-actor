@@ -1,25 +1,17 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
 package actor
 
-//--------------------
-// IMPORTS
-//--------------------
-
 import (
 	"context"
 	"fmt"
 	"time"
 )
-
-//--------------------
-// CONFIGURATION
-//--------------------
 
 // Config contains all configuration options for an Actor.
 type Config struct {
@@ -90,5 +82,3 @@ func defaultFinalizer(err error) error {
 	}
 	return nil
 }
-
-// EOF

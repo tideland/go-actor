@@ -1,15 +1,11 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
 package actor
-
-//--------------------
-// IMPORTS
-//--------------------
 
 import (
 	"context"
@@ -17,10 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 )
-
-//--------------------
-// HELPER
-//--------------------
 
 // Action defines the signature of an actor action.
 type Action func()
@@ -36,10 +28,6 @@ type Recoverer func(reason any) error
 // the work of an Actor. The error is the one returned by the
 // Actor.
 type Finalizer func(err error) error
-
-//--------------------
-// ACTOR
-//--------------------
 
 // request wraps an action with its context.
 type request struct {
@@ -298,5 +286,3 @@ func (act *Actor) finalize() {
 		act.err.Store(&ferr)
 	}
 }
-
-// EOF

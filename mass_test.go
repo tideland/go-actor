@@ -1,15 +1,11 @@
 // Tideland Go Actor - Unit Tests
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
 package actor_test
-
-//--------------------
-// IMPORTS
-//--------------------
 
 import (
 	"math/rand"
@@ -20,10 +16,6 @@ import (
 
 	"tideland.dev/go/actor"
 )
-
-//--------------------
-// TESTS
-//--------------------
 
 // TestMass verifies the starting and stopping an Actor.
 func TestMass(t *testing.T) {
@@ -74,10 +66,6 @@ func TestPerformance(t *testing.T) {
 
 	verify.NoError(t, act.Err())
 }
-
-//--------------------
-// TEST ACTOR
-//--------------------
 
 type PingPong struct {
 	pps   []*PingPong
@@ -136,5 +124,3 @@ func (pp *PingPong) Err() error {
 func (pp *PingPong) Stop() {
 	pp.act.Stop()
 }
-
-// EOF

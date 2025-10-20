@@ -1,15 +1,11 @@
 // Tideland Go Actor - Unit Tests
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
 package actor_test
-
-//--------------------
-// IMPORTS
-//--------------------
 
 import (
 	"testing"
@@ -18,10 +14,6 @@ import (
 	"tideland.dev/go/actor"
 	"tideland.dev/go/asserts/verify"
 )
-
-//--------------------
-// TESTS
-//--------------------
 
 // TestRepeatStopActor verifies Repeat working and being
 // stopped when the Actor is stopped.
@@ -54,7 +46,7 @@ func TestRepeatStopActor(t *testing.T) {
 	<-finalized
 
 	verify.NoError(t, act.Err())
-	verify.Equal(t,counter, 0)
+	verify.Equal(t, counter, 0)
 
 	// Check if the Interval is stopped too.
 	time.Sleep(100 * time.Millisecond)
@@ -88,5 +80,3 @@ func TestRepeatStopInterval(t *testing.T) {
 
 	act.Stop()
 }
-
-// EOF

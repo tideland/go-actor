@@ -1,19 +1,11 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
 package actor
-
-//--------------------
-// IMPORTS
-//--------------------
-
-//--------------------
-// RESULT
-//--------------------
 
 // Result encapsulates both a value and a potential error.
 type Result[T any] struct {
@@ -43,5 +35,3 @@ func NewResult[T any](value T, err error) Result[T] {
 		err:   err,
 	}
 }
-
-// EOF

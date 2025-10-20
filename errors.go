@@ -1,23 +1,15 @@
 // Tideland Go Actor
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
 package actor
 
-//--------------------
-// IMPORTS
-//--------------------
-
 import (
 	"fmt"
 )
-
-//--------------------
-// ERROR TYPES
-//--------------------
 
 // ErrorCode defines the type of error that occurred.
 type ErrorCode int
@@ -85,5 +77,3 @@ func NewError(op string, err error, code ErrorCode) *ActorError {
 		Code: code,
 	}
 }
-
-// EOF

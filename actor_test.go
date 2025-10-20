@@ -1,15 +1,11 @@
 // Tideland Go Actor - Unit Tests
 //
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Oldenburg / Germany
+// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
 package actor_test
-
-//--------------------
-// IMPORTS
-//--------------------
 
 import (
 	"context"
@@ -22,10 +18,6 @@ import (
 
 	"tideland.dev/go/actor"
 )
-
-//--------------------
-// TESTS
-//--------------------
 
 // TestPureOK verifies the starting and stopping an Actor.
 func TestPureOK(t *testing.T) {
@@ -275,5 +267,3 @@ func TestRecovererFail(t *testing.T) {
 	verify.True(t, act.IsDone())
 	verify.ErrorMatch(t, act.Err(), "ouch:.*")
 }
-
-// EOF
