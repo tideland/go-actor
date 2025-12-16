@@ -7,18 +7,17 @@
 ![Workflow](https://github.com/tideland/go-actor/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/tideland/go-actor)](https://goreportcard.com/report/tideland.dev/go/actor)
 
-## Description
+**Tideland Go Actor** provides a lightweight and robust implementation of the Actor Model in Go. It simplifies concurrent programming by encapsulating state and behavior within actors. All actions on an actor's state are executed sequentially in a dedicated background goroutine, eliminating the need for manual locking and reducing the risk of race conditions.
 
-**Tideland Go Actor** provides a lightweight implementation of the Actor model pattern for Go applications. The package ensures thread-safe operations by executing all actions sequentially in a dedicated background goroutine, eliminating the need for explicit locking mechanisms.
+## Features
 
-### Key Features
-
-- **Sequential Execution**: All actions run in a dedicated goroutine
-- **Operation Modes**: Both synchronous and asynchronous execution
-- **Timeout Control**: Global and per-action timeouts
-- **Queue Monitoring**: Track queue status and capacity
-- **Error Handling**: Built-in panic recovery
-- **Zero Dependencies**: Pure Go implementation
+- **Simple API**: A clean and easy-to-use API for creating and interacting with actors.
+- **Synchronous & Asynchronous Actions**: Perform blocking (`DoSync`) or non-blocking (`DoAsync`) actions.
+- **Context Integration**: Control the actor's lifecycle with `context.Context`.
+- **Panic Recovery**: Gracefully handle panics within actor actions using a `Recoverer` function.
+- **Finalization**: Perform cleanup tasks when an actor stops using a `Finalizer` function.
+- **Repeating Actions**: Schedule actions to run at a regular interval with `Repeat`.
+- **Zero Dependencies**: A pure Go implementation with no external dependencies.
 
 ## Installation
 
@@ -28,120 +27,137 @@ go get tideland.dev/go/actor
 
 ## Quick Start
 
-Here's a simple thread-safe counter implementation:
+Here's how to create and use a simple actor:
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"tideland.dev/go/actor"
+)
+
+func main() {
+	// Create an actor with the default configuration.
+	act, err := actor.Go(actor.DefaultConfig())
+	if err != nil {
+		panic(err)
+	}
+	defer act.Stop()
+
+	// Perform a synchronous action.
+	act.DoSync(func() {
+		fmt.Println("Hello from inside the actor!")
+	})
+
+	// Perform an asynchronous action.
+	done := make(chan struct{})
+	act.DoAsync(func() {
+		fmt.Println("This runs in the background.")
+		close(done)
+	})
+
+	// Wait for the async action to finish.
+	<-done
+}
+```
+
+## Examples
+
+### Protecting Struct State
+
+A common pattern is to embed an actor in a struct to make its methods thread-safe.
+The actor serializes access to the struct's fields, so you don't need to use mutexes.
 
 ```go
 type Counter struct {
-    value int
-    act   *actor.Actor
+	value int
+	act   *actor.Actor
 }
 
 func NewCounter() (*Counter, error) {
-    // Create actor with default configuration
-    cfg := actor.DefaultConfig()
-    cfg.ActionTimeout = 5 * time.Second  // Default timeout for all actions
-    
-    act, err := actor.Go(cfg)
-    if err != nil {
-        return nil, err
-    }
-    return &Counter{act: act}, nil
+	c := &Counter{}
+	act, err := actor.Go(actor.DefaultConfig())
+	if err != nil {
+		return nil, err
+	}
+	c.act = act
+	return c, nil
 }
 
-// Increment asynchronously with timeout
-func (c *Counter) Increment() error {
-    return c.act.DoAsyncTimeout(time.Second, func() {
-        c.value++
-    })
+func (c *Counter) Increment() {
+	// Asynchronously increment the value.
+	c.act.DoAsync(func() {
+		c.value++
+	})
 }
 
-// Value returns current count synchronously
-func (c *Counter) Value() (int, error) {
-    var v int
-    err := c.act.DoSync(func() {
-        v = c.value
-    })
-    return v, err
+func (c *Counter) Value() int {
+	// Synchronously read the value.
+	var value int
+	c.act.DoSync(func() {
+		value = c.value
+	})
+	return value
 }
 
-// Stop terminates the actor
 func (c *Counter) Stop() {
-    c.act.Stop()
+	c.act.Stop()
 }
 ```
 
-## Configuration
+### Handling Panics
 
-The actor package uses a `Config` struct for initialization:
-
-```go
-cfg := actor.Config{
-    Context:       ctx,               // Controls actor lifetime
-    QueueCap:      1000,             // Action queue capacity
-    ActionTimeout: 5 * time.Second,   // Default timeout for actions
-    Recoverer:     func(r any) error {
-        log.Printf("Panic: %v", r)
-        return nil
-    },
-    Finalizer:     func(err error) error {
-        if err != nil {
-            log.Printf("Stopped: %v", err)
-        }
-        return err
-    },
-}
-
-act, err := actor.Go(cfg)
-```
-
-## Queue Monitoring
-
-Monitor queue status to prevent overload:
+You can provide a `Recoverer` function to handle panics that occur within an actor.
 
 ```go
-status := act.QueueStatus()
-fmt.Printf("Queue: %d/%d (full: %v)\n", 
-    status.Length, status.Capacity, status.IsFull)
-```
+recovered := make(chan any, 1)
 
-## Timeout Handling
-
-Three ways to handle timeouts:
-
-```go
-// 1. Global timeout in configuration
 cfg := actor.DefaultConfig()
-cfg.ActionTimeout = 5 * time.Second
+cfg.Recoverer = func(reason any) error {
+	recovered <- reason
+	return nil // Returning nil allows the actor to continue.
+}
 
-// 2. Per-action timeout
-err := act.DoSyncTimeout(2*time.Second, func() {
-    // Operation with 2s timeout
+act, _ := actor.Go(cfg)
+defer act.Stop()
+
+act.DoSync(func() {
+	panic("something went wrong")
 })
 
-// 3. Context timeout
-ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-defer cancel()
-err = act.DoSyncWithContext(ctx, func() {
-    // Operation with context timeout
-})
+reason := <-recovered
+fmt.Printf("Recovered from panic: %v", reason)
 ```
 
-## Best Practices
+### Repeating Actions
 
-1. **Keep Actions Small**: Design actions to be quick and focused
-2. **Use Timeouts**: Set appropriate timeouts to prevent hanging
-3. **Monitor Queue**: Check queue status to prevent overload
-4. **Error Handling**: Always check returned errors
-5. **Resource Management**: Call `Stop()` when done
+Use `Repeat` to schedule a function to run at a regular interval.
+
+```go
+act, _ := actor.Go(actor.DefaultConfig())
+defer act.Stop()
+
+counter := 0
+stop, _ := act.Repeat(10*time.Millisecond, func() {
+	if counter < 5 {
+		fmt.Println("Repeating...")
+	}
+	counter++
+})
+
+time.Sleep(60 * time.Millisecond)
+stop()
+```
+
+For more examples, see the `examples_test.go` file.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please open an issue or submit a pull request.
 
 ## License
 
-This project is licensed under the BSD License - see the [LICENSE](LICENSE) file for details.
-
-## Contributors
-
-- Frank Mueller (https://github.com/themue / https://github.com/tideland / https://themue.dev)
+Tideland Go Actor is licensed under the [New BSD License](LICENSE).

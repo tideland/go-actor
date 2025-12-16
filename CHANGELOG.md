@@ -1,5 +1,19 @@
 # Changelog
 
+### v0.5.1 (2025-12-16)
+
+* Added example and documentation for using actors to protect struct state,
+  making methods thread-safe.
+
+### v0.5.0 (2025-12-16)
+
+* Added comprehensive examples for documentation and tests
+* Added benchmarks for key functions
+* Added fuzz tests for actor actions
+* Added a concurrency test to ensure race-free execution
+* Updated `doc.go` and `README.md` for better readability and more examples
+* Updated `Makefile` with a `fuzz` target
+
 ### v0.4.0 (2025-05-23)
 
 * Migrated to Go 1.24
@@ -22,4 +36,4 @@
 
 ### v0.1.0 (2021-09-01)
 
-* Migrated Actor code from Together library
+* Migrated from Tideland Together

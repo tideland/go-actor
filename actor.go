@@ -211,9 +211,9 @@ func (act *Actor) send(req *request) error {
 	select {
 	case act.requests <- req:
 	case <-req.ctx.Done():
-		return fmt.Errorf("action context sending: %v", req.ctx.Err())
+		return fmt.Errorf("action context sending: %w", req.ctx.Err())
 	case <-act.ctx.Done():
-		return fmt.Errorf("actor context sending: %v", act.ctx.Err())
+		return fmt.Errorf("actor context sending: %w", act.ctx.Err())
 	}
 	return nil
 }
@@ -223,9 +223,9 @@ func (act *Actor) wait(req *request) error {
 	select {
 	case <-req.done:
 	case <-req.ctx.Done():
-		return NewError("wait", fmt.Errorf("action context: %v", req.ctx.Err()), ErrCanceled)
+		return NewError("wait", fmt.Errorf("action context: %w", req.ctx.Err()), ErrCanceled)
 	case <-act.ctx.Done():
-		return NewError("wait", fmt.Errorf("actor context: %v", act.ctx.Err()), ErrShutdown)
+		return NewError("wait", fmt.Errorf("actor context: %w", act.ctx.Err()), ErrShutdown)
 	}
 	if req.err != nil {
 		return NewError("wait", req.err, ErrCanceled)

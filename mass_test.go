@@ -20,11 +20,11 @@ import (
 // TestMass verifies the starting and stopping an Actor.
 func TestMass(t *testing.T) {
 	pps := make([]*PingPong, 1000)
-	for i := 0; i < len(pps); i++ {
+	for i := range pps {
 		pps[i] = NewPingPong(pps)
 	}
 	// Let's start the ping pong party.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		n := rand.Intn(len(pps))
 		pps[n].Ping()
 		n = rand.Intn(len(pps))
@@ -54,7 +54,7 @@ func TestPerformance(t *testing.T) {
 	verify.NotNil(t, act)
 
 	now := time.Now()
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		act.DoAsync(func() {})
 	}
 	duration := time.Since(now)

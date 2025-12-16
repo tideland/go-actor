@@ -5,96 +5,94 @@
 // All rights reserved. Use of this source code is governed
 // by the new BSD license.
 
-// Package actor provides a robust implementation of the Actor model pattern for concurrent
-// programming in Go. It enables safe and efficient concurrent operations by ensuring that
-// all actions on shared state are executed sequentially in a dedicated background goroutine.
-//
-// Key Features:
-//   - Sequential execution of actions in a background goroutine
-//   - Support for both synchronous and asynchronous operations
-//   - Built-in panic recovery and error handling
-//   - Context-based cancellation support
-//   - Action timeouts (global and per-action)
-//   - Queue monitoring capabilities
-//
-// Basic Usage:
-//
-//	type Counter struct {
-//		value int
-//		act   *actor.Actor
-//	}
-//
-//	func NewCounter() (*Counter, error) {
-//		cfg := actor.DefaultConfig()
-//		act, err := actor.Go(cfg)
-//		if err != nil {
-//			return nil, err
-//		}
-//		return &Counter{act: act}, nil
-//	}
-//
-//	// Asynchronous increment
-//	func (c *Counter) Increment() error {
-//		return c.act.DoAsync(func() {
-//			c.value++
-//		})
-//	}
-//
-//	// Synchronous read with timeout
-//	func (c *Counter) Value() (int, error) {
-//		var v int
-//		err := c.act.DoSyncTimeout(time.Second, func() {
-//			v = c.value
-//		})
-//		return v, err
-//	}
-//
-// Configuration:
-//
-//	cfg := actor.Config{
-//		Context:       ctx,               // Custom context
-//		QueueCap:      1000,             // Queue capacity
-//		ActionTimeout: 5 * time.Second,   // Default timeout
-//		Recoverer: func(r any) error {
-//			log.Printf("Panic: %v", r)
-//			return nil
-//		},
-//		Finalizer: func(err error) error {
-//			if err != nil {
-//				log.Printf("Stopped with: %v", err)
-//			}
-//			return err
-//		},
-//	}
-//
-// Queue Monitoring:
-//
-//	status := act.QueueStatus()
-//	if status.IsFull {
-//		log.Printf("Queue at capacity: %d/%d", status.Length, status.Capacity)
-//	}
-//
-// Timeout Handling:
-//
-//	// Global timeout via config
-//	cfg := actor.DefaultConfig()
-//	cfg.ActionTimeout = 5 * time.Second
-//	act, _ := actor.Go(cfg)
-//
-//	// Per-action timeout
-//	err := act.DoSyncTimeout(time.Second, func() {
-//		// Operation with 1s timeout
-//	})
-//
-//	// Context timeout
-//	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-//	defer cancel()
-//	err = act.DoSyncWithContext(ctx, func() {
-//		// Operation with context timeout
-//	})
-//
-// The actor package is particularly useful when building concurrent applications
-// that need to maintain consistent state without explicit locking mechanisms.
-// It helps prevent race conditions and makes concurrent code easier to reason about
-// by centralizing state modifications in a single goroutine.
+/*
+Package actor provides a robust and easy-to-use implementation of the Actor Model in Go.
+It simplifies concurrent programming by allowing you to encapsulate state and behavior
+within actors. All actions on an actor's state are executed sequentially in a
+dedicated background goroutine, eliminating the need for manual locking and reducing
+the risk of race conditions.
+
+The package is designed to be flexible and extensible, with support for features like
+synchronous and asynchronous actions, panic recovery, context-based cancellation,
+and repeating tasks.
+
+Usage:
+
+To create an actor, use the `actor.Go()` function with a configuration. The default
+configuration is often a good starting point:
+
+	act, err := actor.Go(actor.DefaultConfig())
+	if err != nil {
+		// Handle error.
+	}
+	defer act.Stop()
+
+Actions can be performed on the actor synchronously or asynchronously:
+
+	// Synchronous action, blocks until complete.
+	err := act.DoSync(func() {
+		fmt.Println("This runs inside the actor.")
+	})
+
+	// Asynchronous action, returns immediately.
+	err = act.DoAsync(func() {
+		fmt.Println("This runs inside the actor, too.")
+	})
+
+Protecting Struct State:
+
+A common use case for actors is to protect the state of a struct by embedding an
+actor within it. This serializes access to the struct's fields and ensures that
+all method calls are thread-safe.
+
+	type Counter struct {
+		value int
+		act   *actor.Actor
+	}
+
+	func NewCounter() (*Counter, error) {
+		c := &Counter{}
+		act, err := actor.Go(actor.DefaultConfig())
+		if err != nil {
+			return nil, err
+		}
+		c.act = act
+		return c, nil
+	}
+
+	func (c *Counter) Increment() {
+		c.act.DoAsync(func() {
+			c.value++
+		})
+	}
+
+	func (c *Counter) Value() int {
+		var value int
+		c.act.DoSync(func() {
+			value = c.value
+		})
+		return value
+	}
+
+Features:
+
+  - Synchronous and Asynchronous Actions: Choose between `DoSync` for blocking
+    operations and `DoAsync` for non-blocking operations. `DoSync` can also be
+    used with a `context` for timeouts.
+
+  - Panic Recovery: The `Recoverer` function in the configuration allows you to
+    gracefully handle panics that occur within an actor's actions.
+
+  - Finalization: The `Finalizer` function is called when the actor stops,
+    allowing you to perform cleanup tasks.
+
+  - Context Integration: Actors can be controlled using a `context.Context`,
+    allowing them to be stopped when the context is canceled.
+
+  - Repeating Actions: The `Repeat` method allows you to schedule a function to be
+    called at a regular interval.
+
+For more detailed examples, see the `examples_test.go` file.
+*/
+
 package actor

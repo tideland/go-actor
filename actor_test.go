@@ -105,7 +105,7 @@ func TestSync(t *testing.T) {
 
 	counter := 0
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		verify.NoError(t, act.DoSync(func() {
 			counter++
 		}))
@@ -195,7 +195,7 @@ func TestAsyncWithQueueCap(t *testing.T) {
 
 	// Now start asynchrounous calls.
 	now := time.Now()
-	for i := 0; i < 128; i++ {
+	for range 128 {
 		verify.NoError(t, act.DoAsync(func() {
 			time.Sleep(2 * time.Millisecond)
 			sigs <- struct{}{}
@@ -266,4 +266,119 @@ func TestRecovererFail(t *testing.T) {
 
 	verify.True(t, act.IsDone())
 	verify.ErrorMatch(t, act.Err(), "ouch:.*")
+}
+
+// TestConcurrentAccess tests concurrent access to an actor.
+func TestConcurrentAccess(t *testing.T) {
+	act, err := actor.Go(actor.DefaultConfig())
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	const goroutines = 10
+	const actionsPerGoroutine = 100
+
+	counter := 0
+
+	start := make(chan struct{})
+	done := make(chan struct{})
+
+	for range goroutines {
+		go func() {
+			<-start
+			for range actionsPerGoroutine {
+				act.DoSync(func() {
+					counter++
+				})
+			}
+			done <- struct{}{}
+		}()
+	}
+
+	close(start)
+
+	for range goroutines {
+		<-done
+	}
+
+	verify.Equal(t, counter, goroutines*actionsPerGoroutine)
+}
+
+// BenchmarkGo benchmarks the creation of an actor.
+func BenchmarkGo(b *testing.B) {
+	for b.Loop() {
+		act, err := actor.Go(actor.DefaultConfig())
+		if err != nil {
+			b.Fatalf("cannot create actor: %v", err)
+		}
+		act.Stop()
+	}
+}
+
+// BenchmarkDoSync benchmarks synchronous actions.
+func BenchmarkDoSync(b *testing.B) {
+	act, err := actor.Go(actor.DefaultConfig())
+	if err != nil {
+		b.Fatalf("cannot create actor: %v", err)
+	}
+	defer act.Stop()
+
+	for b.Loop() {
+		act.DoSync(func() {
+			// Noop.
+		})
+	}
+}
+
+// BenchmarkDoAsync benchmarks asynchronous actions.
+func BenchmarkDoAsync(b *testing.B) {
+	act, err := actor.Go(actor.DefaultConfig())
+	if err != nil {
+		b.Fatalf("cannot create actor: %v", err)
+	}
+	defer act.Stop()
+
+	for b.Loop() {
+		act.DoAsync(func() {
+			// Noop.
+		})
+	}
+}
+
+// FuzzAction fuzzes actor actions.
+func FuzzAction(f *testing.F) {
+	f.Add("sync", 10)
+	f.Add("async", 100)
+	f.Add("sync", 0)
+
+	f.Fuzz(func(t *testing.T, actionType string, numActions int) {
+		act, err := actor.Go(actor.DefaultConfig())
+		verify.NoError(t, err)
+
+		counter := 0
+		for range numActions {
+			switch actionType {
+			case "sync":
+				act.DoSync(func() {
+					counter++
+				})
+			case "async":
+				act.DoAsync(func() {
+					counter++
+				})
+			default:
+				// Invalid action, just continue.
+			}
+		}
+
+		// Use a sync action to wait for all async actions to complete.
+		act.DoSync(func() {
+			if numActions > 0 && (actionType == "sync" || actionType == "async") {
+				verify.Equal(t, counter, numActions)
+			} else {
+				verify.Equal(t, counter, 0)
+			}
+		})
+
+		act.Stop()
+	})
 }
