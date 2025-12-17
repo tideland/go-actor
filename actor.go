@@ -76,6 +76,7 @@ type Actor struct {
 	recoverer Recoverer
 	finalizer Finalizer
 	err       atomic.Pointer[error]
+	started   chan struct{}
 	done      chan struct{}
 	timeout   time.Duration // default timeout for actions from config
 	status    atomic.Bool
@@ -93,6 +94,7 @@ func Go(cfg Config) (*Actor, error) {
 		requests:  make(chan *request, cfg.QueueCap),
 		recoverer: cfg.Recoverer,
 		finalizer: cfg.Finalizer,
+		started:   make(chan struct{}),
 		timeout:   cfg.ActionTimeout,
 	}
 
@@ -100,16 +102,12 @@ func Go(cfg Config) (*Actor, error) {
 	act.ctx, act.cancel = context.WithCancel(cfg.Context)
 
 	// Start the backend.
-	started := make(chan struct{})
-	go act.backend(started)
+	go act.backend()
 
-	// Wait for backend to start.
-	select {
-	case <-started:
-		return act, nil
-	case <-time.After(time.Second):
-		return nil, NewError("Go", fmt.Errorf("backend did not start"), ErrTimeout)
-	}
+	// Synchronize with the actor to ensure it has started.
+	act.waitStarted()
+
+	return act, nil
 }
 
 // DoAsync sends the actor function to the backend goroutine and returns
@@ -141,6 +139,11 @@ func (act *Actor) DoSyncWithContext(ctx context.Context, action Action) error {
 	return act.wait(req)
 }
 
+// waitStarted synchronizes with the actor to ensure it has started.
+func (act *Actor) waitStarted() {
+	<-act.started
+}
+
 // Done returns a channel that is closed when the Actor terminates.
 func (act *Actor) Done() <-chan struct{} {
 	return act.done
@@ -150,6 +153,11 @@ func (act *Actor) Done() <-chan struct{} {
 // or if statement.
 func (act *Actor) IsDone() bool {
 	return act.status.Load()
+}
+
+// IsRunning allows to simply check if the Actor is running.
+func (act *Actor) IsRunning() bool {
+	return !act.status.Load()
 }
 
 // Err returns information if the Actor has an error.
@@ -234,9 +242,9 @@ func (act *Actor) wait(req *request) error {
 }
 
 // backend runs the goroutine of the Actor.
-func (act *Actor) backend(started chan struct{}) {
+func (act *Actor) backend() {
 	defer act.finalize()
-	close(started)
+	close(act.started)
 
 	act.done = make(chan struct{})
 

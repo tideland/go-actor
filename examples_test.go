@@ -176,6 +176,9 @@ func Example_withContext() {
 	// Cancel the context to stop the actor.
 	cancel()
 
+	// Wait for the actor to be done.
+	<-act.Done()
+
 	// Check that the actor is done.
 	if act.IsDone() {
 		fmt.Println("Actor stopped via context cancellation.")
@@ -234,7 +237,7 @@ func Example_struct() {
 	}
 
 	// Increment the counter ten times concurrently.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go Increment(counter)
 	}
 

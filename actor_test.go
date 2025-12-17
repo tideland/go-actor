@@ -303,6 +303,19 @@ func TestConcurrentAccess(t *testing.T) {
 	verify.Equal(t, counter, goroutines*actionsPerGoroutine)
 }
 
+// TestIsRunning verifies the IsRunning() method.
+func TestIsRunning(t *testing.T) {
+	act, err := actor.Go(actor.DefaultConfig())
+	verify.NoError(t, err)
+
+	verify.True(t, act.IsRunning())
+
+	act.Stop()
+	<-act.Done()
+
+	verify.False(t, act.IsRunning())
+}
+
 // BenchmarkGo benchmarks the creation of an actor.
 func BenchmarkGo(b *testing.B) {
 	for b.Loop() {
