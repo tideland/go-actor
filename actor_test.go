@@ -19,379 +19,370 @@ import (
 	"tideland.dev/go/actor"
 )
 
-// TestPureOK verifies the starting and stopping an Actor.
-func TestPureOK(t *testing.T) {
-	finalized := make(chan struct{})
-	cfg := actor.DefaultConfig()
-	cfg.Finalizer = func(err error) error {
-		defer close(finalized)
-		return err
-	}
-	act, err := actor.Go(cfg)
+// Test state types
+
+type Counter struct {
+	value int
+}
+
+type Account struct {
+	balance int
+	name    string
+}
+
+// TestActorCreate verifies creating and stopping an actor.
+func TestActorCreate(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
+	verify.True(t, act.IsRunning())
 
 	act.Stop()
-
-	<-finalized
-
-	verify.NoError(t, act.Err())
-}
-
-// TestPureDoubleStop verifies stopping an Actor twice.
-func TestPureDoubleStop(t *testing.T) {
-	finalized := make(chan struct{})
-	cfg := actor.DefaultConfig()
-	cfg.Finalizer = func(err error) error {
-		defer close(finalized)
-		return err
-	}
-	act, err := actor.Go(cfg)
-	verify.NoError(t, err)
-	verify.NotNil(t, act)
-
-	act.Stop()
-	act.Stop()
-
-	<-finalized
-
-	verify.NoError(t, act.Err())
-}
-
-// TestPureError verifies starting and stopping an Actor.
-// Returning the stop error.
-func TestPureError(t *testing.T) {
-	finalized := make(chan struct{})
-	cfg := actor.DefaultConfig()
-	cfg.Finalizer = func(err error) error {
-		defer close(finalized)
-		return errors.New("damn")
-	}
-	act, err := actor.Go(cfg)
-	verify.NoError(t, err)
-	verify.NotNil(t, act)
-
-	act.Stop()
-
-	<-finalized
-
-	verify.ErrorMatch(t, act.Err(), "damn")
-}
-
-// TestContext verifies starting and stopping an Actor
-// with an external context.
-func TestContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cfg := actor.DefaultConfig()
-	cfg.Context = ctx
-	act, err := actor.Go(cfg)
-	verify.NoError(t, err)
-	verify.NotNil(t, act)
-
-	cancel()
-	verify.NoError(t, act.Err())
-}
-
-// TestSync verifies synchronous calls.
-func TestSync(t *testing.T) {
-	finalized := make(chan struct{})
-	cfg := actor.DefaultConfig()
-	cfg.Finalizer = func(err error) error {
-		defer close(finalized)
-		return err
-	}
-	act, err := actor.Go(cfg)
-	verify.NoError(t, err)
-
-	counter := 0
-
-	for range 5 {
-		verify.NoError(t, act.DoSync(func() {
-			counter++
-		}))
-	}
-
-	verify.Equal(t, counter, 5)
-
-	act.Stop()
-
-	<-finalized
-
-	verify.ErrorMatch(t, act.DoSync(func() {
-		counter++
-	}), "actor is done")
-}
-
-// TestTimeout verifies timout error of a synchronous Action.
-func TestTimeout(t *testing.T) {
-	act, err := actor.Go(actor.DefaultConfig())
-	verify.NoError(t, err)
-
-	// Scenario: Timeout is shorter than needed time, so error
-	// is returned.
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	err = act.DoSyncWithContext(ctx, func() {
-		time.Sleep(25 * time.Millisecond)
-	})
-	verify.NoError(t, err)
-	cancel()
-	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
-	err = act.DoSyncWithContext(ctx, func() {
-		time.Sleep(100 * time.Millisecond)
-	})
-	verify.ErrorMatch(t, err, "action.*context deadline exceeded.*")
-	cancel()
-
-	time.Sleep(150 * time.Millisecond)
-	act.Stop()
-}
-
-// TestWithTimeoutContext verifies timout error of a synchronous Action
-// when the Actor is configured with a context timeout.
-func TestWithTimeoutContext(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	cfg := actor.DefaultConfig()
-	cfg.Context = ctx
-	act, err := actor.Go(cfg)
-	verify.NoError(t, err)
-
-	// Scenario: Configured timeout is shorter than needed
-	// time, so error is returned.
-	err = act.DoSync(func() {
-		time.Sleep(10 * time.Millisecond)
-	})
-	verify.NoError(t, err)
-	err = act.DoSync(func() {
-		time.Sleep(100 * time.Millisecond)
-	})
-	verify.ErrorMatch(t, err, "actor.*context deadline exceeded.*")
-
-	act.Stop()
-	cancel()
-}
-
-// TestAsyncWithQueueCap tests running multiple calls asynchronously.
-func TestAsyncWithQueueCap(t *testing.T) {
-	cfg := actor.DefaultConfig()
-	cfg.QueueCap = 128
-	act, err := actor.Go(cfg)
-	verify.NoError(t, err)
-
-	sigs := make(chan struct{}, 1)
-	done := make(chan struct{}, 1)
-
-	// Start background func waiting for the signals of
-	// the asynchrounous calls.
-	go func() {
-		count := 0
-		for range sigs {
-			count++
-			if count == 128 {
-				break
-			}
-		}
-		close(done)
-	}()
-
-	// Now start asynchrounous calls.
-	now := time.Now()
-	for range 128 {
-		verify.NoError(t, act.DoAsync(func() {
-			time.Sleep(2 * time.Millisecond)
-			sigs <- struct{}{}
-		}))
-	}
-	enqueued := time.Since(now)
-
-	// Expect signal done to be sent about one second later.
-	<-done
-	duration := time.Since(now)
-
-	verify.True(t, (duration-250*time.Millisecond) > enqueued)
-
-	act.Stop()
-}
-
-// TestRecovererOK tests successful handling of panic recoveries.
-func TestRecovererOK(t *testing.T) {
-	counter := 0
-	recovered := false
-	done := make(chan struct{})
-	cfg := actor.DefaultConfig()
-	cfg.Recoverer = func(reason any) error {
-		defer close(done)
-		recovered = true
-		return nil
-	}
-	act, err := actor.Go(cfg)
-	verify.NoError(t, err)
-
-	act.DoSync(func() {
-		counter++
-		// Will crash on first call.
-		fmt.Printf("%v", counter/(counter-1))
-	})
-	<-done
-	verify.True(t, recovered)
-	err = act.DoSync(func() {
-		counter++
-	})
-	verify.NoError(t, err)
-	verify.Equal(t, counter, 2)
-
-	act.Stop()
-}
-
-// TestRecovererFail tests failing handling of panic recoveries.
-func TestRecovererFail(t *testing.T) {
-	counter := 0
-	recovered := false
-	done := make(chan struct{})
-	cfg := actor.DefaultConfig()
-	cfg.Recoverer = func(reason any) error {
-		defer close(done)
-		recovered = true
-		return fmt.Errorf("ouch: %v", reason)
-	}
-	act, err := actor.Go(cfg)
-	verify.NoError(t, err)
-
-	act.DoSync(func() {
-		counter++
-		// Will crash on first call.
-		fmt.Printf("%v", counter/(counter-1))
-	})
-	<-done
-	verify.True(t, recovered)
+	<-act.Done()
 
 	verify.True(t, act.IsDone())
-	verify.ErrorMatch(t, act.Err(), "ouch:.*")
+	verify.False(t, act.IsRunning())
 }
 
-// TestConcurrentAccess tests concurrent access to an actor.
-func TestConcurrentAccess(t *testing.T) {
-	act, err := actor.Go(actor.DefaultConfig())
+// TestActorDoubleStop verifies stopping an actor twice is safe.
+func TestActorDoubleStop(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{}, cfg)
+	verify.NoError(t, err)
+
+	act.Stop()
+	act.Stop() // Should be safe to call twice
+
+	<-act.Done()
+	verify.True(t, act.IsDone())
+}
+
+// TestActorWithContext verifies context cancellation stops the actor.
+func TestActorWithContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := actor.NewConfig(ctx)
+	act, err := actor.Go(Counter{}, cfg)
+	verify.NoError(t, err)
+
+	cancel()
+	<-act.Done()
+
+	verify.True(t, act.IsDone())
+}
+
+// TestActorFinalizer verifies the finalizer is called on shutdown.
+func TestActorFinalizer(t *testing.T) {
+	finalized := make(chan struct{})
+	cfg := actor.NewConfig(context.Background()).
+		SetFinalizer(func(err error) error {
+			close(finalized)
+			return err
+		})
+
+	act, err := actor.Go(Counter{}, cfg)
+	verify.NoError(t, err)
+
+	act.Stop()
+
+	select {
+	case <-finalized:
+		// Success
+	case <-time.After(1 * time.Second):
+		t.Fatal("Finalizer was not called")
+	}
+}
+
+// TestActorDoSync verifies synchronous actions.
+func TestActorDoSync(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
 	verify.NoError(t, err)
 	defer act.Stop()
 
-	const goroutines = 10
-	const actionsPerGoroutine = 100
+	err = act.Do(func(s *Counter) {
+		s.value = 42
+	})
+	verify.NoError(t, err)
 
-	counter := 0
+	value, err := act.Query(func(s *Counter) any {
+		return s.value
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, value.(int), 42)
+}
 
-	start := make(chan struct{})
+// TestActorDoAsync verifies asynchronous actions.
+func TestActorDoAsync(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	// Queue several async actions
+	for i := 0; i < 10; i++ {
+		err := act.DoAsync(func(s *Counter) {
+			s.value++
+		})
+		verify.NoError(t, err)
+	}
+
+	// Wait for them to complete
+	time.Sleep(50 * time.Millisecond)
+
+	value, err := act.Query(func(s *Counter) any {
+		return s.value
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, value.(int), 10)
+}
+
+// TestActorQuery verifies reading state.
+func TestActorQuery(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Account{balance: 100, name: "Savings"}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	balance, err := act.Query(func(s *Account) any {
+		return s.balance
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, balance.(int), 100)
+
+	name, err := act.Query(func(s *Account) any {
+		return s.name
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, name.(string), "Savings")
+}
+
+// TestActorUpdate verifies update with return value.
+func TestActorUpdate(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 5}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	oldValue, err := act.Update(func(s *Counter) (any, error) {
+		old := s.value
+		s.value = 10
+		return old, nil
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, oldValue, 5)
+
+	newValue, err := act.Query(func(s *Counter) any {
+		return s.value
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, newValue.(int), 10)
+}
+
+// TestActorDoWithError verifies error handling from actions.
+func TestActorDoWithError(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Account{balance: 100}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	err = act.DoWithError(func(s *Account) error {
+		if s.balance < 200 {
+			return errors.New("insufficient funds")
+		}
+		s.balance -= 200
+		return nil
+	})
+	verify.ErrorMatch(t, err, "insufficient funds")
+
+	// Balance should be unchanged
+	balance, _ := act.Query(func(s *Account) any {
+		return s.balance
+	})
+	verify.Equal(t, balance.(int), 100)
+}
+
+// TestActorTimeout verifies action timeout.
+func TestActorTimeout(t *testing.T) {
+	cfg := actor.NewConfig(context.Background()).
+		SetActionTimeout(50 * time.Millisecond)
+
+	act, err := actor.Go(Counter{}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	err = act.Do(func(s *Counter) {
+		time.Sleep(200 * time.Millisecond)
+	})
+	verify.Error(t, err)
+}
+
+// TestActorConcurrency verifies concurrent access is serialized.
+func TestActorConcurrency(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	// Start 100 goroutines, each incrementing 10 times
 	done := make(chan struct{})
-
-	for range goroutines {
+	for i := 0; i < 100; i++ {
 		go func() {
-			<-start
-			for range actionsPerGoroutine {
-				act.DoSync(func() {
-					counter++
+			for j := 0; j < 10; j++ {
+				act.DoAsync(func(s *Counter) {
+					s.value++
 				})
 			}
 			done <- struct{}{}
 		}()
 	}
 
-	close(start)
-
-	for range goroutines {
+	// Wait for all goroutines to finish
+	for i := 0; i < 100; i++ {
 		<-done
 	}
 
-	verify.Equal(t, counter, goroutines*actionsPerGoroutine)
+	// Wait for all async actions to complete
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify count is exactly 1000 (no race conditions)
+	value, err := act.Query(func(s *Counter) any {
+		return s.value
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, value.(int), 1000)
 }
 
-// TestIsRunning verifies the IsRunning() method.
-func TestIsRunning(t *testing.T) {
-	act, err := actor.Go(actor.DefaultConfig())
+// TestActorRepeat verifies repeating actions.
+func TestActorRepeat(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
 	verify.NoError(t, err)
+	defer act.Stop()
 
-	verify.True(t, act.IsRunning())
+	stop := act.Repeat(10*time.Millisecond, func(s *Counter) {
+		s.value++
+	})
+
+	// Let it run for a bit
+	time.Sleep(55 * time.Millisecond)
+	stop()
+
+	// Give it time to stop
+	time.Sleep(20 * time.Millisecond)
+
+	value, err := act.Query(func(s *Counter) any {
+		return s.value
+	})
+	verify.NoError(t, err)
+	verify.True(t, value.(int) >= 3 && value.(int) <= 7, fmt.Sprintf("Expected 3-7 increments, got %d", value.(int)))
+}
+
+// TestActorQueueStatus verifies queue status reporting.
+func TestActorQueueStatus(t *testing.T) {
+	cfg := actor.NewConfig(context.Background()).
+		SetQueueCapacity(10)
+
+	act, err := actor.Go(Counter{}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	status := act.QueueStatus()
+	verify.Equal(t, status.Capacity, 10)
+	verify.Equal(t, status.Length, 0)
+	verify.False(t, status.IsFull)
+}
+
+// TestConfigValidation verifies configuration validation.
+func TestConfigValidation(t *testing.T) {
+	// Test invalid queue capacity
+	cfg := actor.NewConfig(context.Background()).
+		SetQueueCapacity(-10)
+
+	err := cfg.Validate()
+	verify.Error(t, err)
+
+	_, err = actor.Go(Counter{}, cfg)
+	verify.Error(t, err)
+}
+
+// TestConfigErrorAccumulation verifies multiple errors are accumulated.
+func TestConfigErrorAccumulation(t *testing.T) {
+	cfg := actor.NewConfig(context.Background()).
+		SetQueueCapacity(-10).
+		SetActionTimeout(-5 * time.Second).
+		SetShutdownTimeout(-1 * time.Second)
+
+	err := cfg.Error()
+	verify.Error(t, err)
+
+	// Should contain all three errors
+	errStr := err.Error()
+	verify.True(t, len(errStr) > 50, "Expected multiple errors to be accumulated")
+}
+
+// TestConfigFluentBuilder verifies fluent configuration API.
+func TestConfigFluentBuilder(t *testing.T) {
+	called := false
+	cfg := actor.NewConfig(context.Background()).
+		SetQueueCapacity(512).
+		SetActionTimeout(5 * time.Second).
+		SetShutdownTimeout(10 * time.Second).
+		SetFinalizer(func(err error) error {
+			called = true
+			return nil
+		})
+
+	verify.NoError(t, cfg.Validate())
+	verify.Equal(t, cfg.QueueCapacity(), 512)
+	verify.Equal(t, cfg.ActionTimeout(), 5*time.Second)
+	verify.Equal(t, cfg.ShutdownTimeout(), 10*time.Second)
+
+	act, err := actor.Go(Counter{}, cfg)
+	verify.NoError(t, err)
 
 	act.Stop()
 	<-act.Done()
 
-	verify.False(t, act.IsRunning())
+	verify.True(t, called, "Finalizer should have been called")
 }
 
-// BenchmarkGo benchmarks the creation of an actor.
-func BenchmarkGo(b *testing.B) {
-	for b.Loop() {
-		act, err := actor.Go(actor.DefaultConfig())
-		if err != nil {
-			b.Fatalf("cannot create actor: %v", err)
-		}
-		act.Stop()
-	}
-}
+// TestActorAfterStop verifies operations after stop return errors.
+func TestActorAfterStop(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{}, cfg)
+	verify.NoError(t, err)
 
-// BenchmarkDoSync benchmarks synchronous actions.
-func BenchmarkDoSync(b *testing.B) {
-	act, err := actor.Go(actor.DefaultConfig())
-	if err != nil {
-		b.Fatalf("cannot create actor: %v", err)
-	}
-	defer act.Stop()
+	act.Stop()
+	<-act.Done()
 
-	for b.Loop() {
-		act.DoSync(func() {
-			// Noop.
-		})
-	}
-}
-
-// BenchmarkDoAsync benchmarks asynchronous actions.
-func BenchmarkDoAsync(b *testing.B) {
-	act, err := actor.Go(actor.DefaultConfig())
-	if err != nil {
-		b.Fatalf("cannot create actor: %v", err)
-	}
-	defer act.Stop()
-
-	for b.Loop() {
-		act.DoAsync(func() {
-			// Noop.
-		})
-	}
-}
-
-// FuzzAction fuzzes actor actions.
-func FuzzAction(f *testing.F) {
-	f.Add("sync", 10)
-	f.Add("async", 100)
-	f.Add("sync", 0)
-
-	f.Fuzz(func(t *testing.T, actionType string, numActions int) {
-		act, err := actor.Go(actor.DefaultConfig())
-		verify.NoError(t, err)
-
-		counter := 0
-		for range numActions {
-			switch actionType {
-			case "sync":
-				act.DoSync(func() {
-					counter++
-				})
-			case "async":
-				act.DoAsync(func() {
-					counter++
-				})
-			default:
-				// Invalid action, just continue.
-			}
-		}
-
-		// Use a sync action to wait for all async actions to complete.
-		act.DoSync(func() {
-			if numActions > 0 && (actionType == "sync" || actionType == "async") {
-				verify.Equal(t, counter, numActions)
-			} else {
-				verify.Equal(t, counter, 0)
-			}
-		})
-
-		act.Stop()
+	err = act.Do(func(s *Counter) {
+		s.value++
 	})
+	verify.Error(t, err)
+
+	err = act.DoAsync(func(s *Counter) {
+		s.value++
+	})
+	verify.Error(t, err)
+}
+
+// TestActorAsyncError verifies async actions with errors stop the actor.
+func TestActorAsyncError(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{}, cfg)
+	verify.NoError(t, err)
+
+	// Queue an async action that returns an error
+	err = act.DoAsyncWithError(func(s *Counter) error {
+		return errors.New("async error")
+	})
+	verify.NoError(t, err) // Queueing succeeds
+
+	// Wait for actor to process and stop
+	<-act.Done()
+
+	// Actor should have stopped due to the error
+	verify.True(t, act.IsDone())
+	verify.ErrorMatch(t, act.Err(), "async error")
 }

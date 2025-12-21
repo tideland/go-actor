@@ -1,4 +1,4 @@
-// Tideland Go Actor - Unit Tests
+// Tideland Go Actor - Examples
 //
 // Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
@@ -10,249 +10,295 @@ package actor_test
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"tideland.dev/go/actor"
 )
 
-// ExampleSimple demonstrates the basic usage of an actor.
+// Example_simple demonstrates the basic usage of an actor with encapsulated state.
 func Example_simple() {
-	// Create a default actor.
-	act, err := actor.Go(actor.DefaultConfig())
-	if err != nil {
-		panic(err)
-	}
-	defer act.Stop()
-
-	// Perform a synchronous action.
-	err = act.DoSync(func() {
-		fmt.Println("Hello, Actor!")
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	// Output:
-	// Hello, Actor!
-}
-
-// ExampleWithFinalizer shows how to use a finalizer to clean up resources.
-func Example_withFinalizer() {
-	// Create a channel to signal finalization.
-	finalized := make(chan struct{})
-
-	// Configure the actor with a finalizer.
-	cfg := actor.DefaultConfig()
-	cfg.Finalizer = func(err error) error {
-		fmt.Println("Finalizer: actor stopped")
-		close(finalized)
-		return err
-	}
-
-	// Create and start the actor.
-	act, err := actor.Go(cfg)
-	if err != nil {
-		panic(err)
-	}
-
-	// Stop the actor and wait for the finalizer to complete.
-	act.Stop()
-	<-finalized
-
-	// Output:
-	// Finalizer: actor stopped
-}
-
-// ExampleWithRecoverer shows how to recover from panics within an actor.
-func Example_withRecoverer() {
-	// Create a channel to signal recovery.
-	recovered := make(chan any, 1)
-
-	// Configure the actor with a recoverer.
-	cfg := actor.DefaultConfig()
-	cfg.Recoverer = func(reason any) error {
-		recovered <- reason
-		return nil // Returning nil allows the actor to continue running.
-	}
-
-	// Create and start the actor.
-	act, err := actor.Go(cfg)
-	if err != nil {
-		panic(err)
-	}
-	defer act.Stop()
-
-	// Perform an action that will panic.
-	act.DoSync(func() {
-		panic("something went wrong")
-	})
-
-	// Wait for the recoverer to be called and print the reason.
-	reason := <-recovered
-	fmt.Printf("Recovered from panic: %v", reason)
-
-	// Output:
-	// Recovered from panic: something went wrong
-}
-
-// ExampleSyncAndAsync demonstrates synchronous and asynchronous actions.
-func Example_syncAndAsync() {
-	// Create a default actor.
-	act, err := actor.Go(actor.DefaultConfig())
-	if err != nil {
-		panic(err)
-	}
-	defer act.Stop()
-
-	// Synchronous action.
-	act.DoSync(func() {
-		fmt.Println("Sync: Hello from inside the actor!")
-	})
-
-	// Asynchronous action.
-	done := make(chan struct{})
-	act.DoAsync(func() {
-		fmt.Println("Async: Hello from inside the actor!")
-		close(done)
-	})
-
-	// Wait for the asynchronous action to complete.
-	<-done
-
-	// Output:
-	// Sync: Hello from inside the actor!
-	// Async: Hello from inside the actor!
-}
-
-// ExampleRepeat demonstrates repeating actions.
-func Example_repeat() {
-	// Create a default actor.
-	act, err := actor.Go(actor.DefaultConfig())
-	if err != nil {
-		panic(err)
-	}
-
-	counter := 0
-	stop, err := act.Repeat(10*time.Millisecond, func() {
-		if counter < 5 {
-			fmt.Println("Repeating...")
-		}
-		counter++
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	// Let the repeating action run for a while.
-	time.Sleep(60 * time.Millisecond)
-
-	// Stop the repeating action and the actor.
-	stop()
-	act.Stop()
-
-	// Output:
-	// Repeating...
-	// Repeating...
-	// Repeating...
-	// Repeating...
-	// Repeating...
-}
-
-// ExampleWithContext demonstrates using a context to control the actor's lifecycle.
-func Example_withContext() {
-	// Create a context that can be canceled.
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Configure the actor to use the context.
-	cfg := actor.DefaultConfig()
-	cfg.Context = ctx
-
-	// Create and start the actor.
-	act, err := actor.Go(cfg)
-	if err != nil {
-		panic(err)
-	}
-
-	// Cancel the context to stop the actor.
-	cancel()
-
-	// Wait for the actor to be done.
-	<-act.Done()
-
-	// Check that the actor is done.
-	if act.IsDone() {
-		fmt.Println("Actor stopped via context cancellation.")
-	}
-
-	// Output:
-	// Actor stopped via context cancellation.
-}
-
-// Example_struct demonstrates how to use an actor to protect the state of a
-// struct. The Counter struct has an internal actor that serializes access to
-// the value field. This ensures that all method calls are thread-safe.
-func Example_struct() {
-	// Counter is a simple struct that uses an actor to protect its state.
+	// Define state type
 	type Counter struct {
 		value int
-		act   *actor.Actor
 	}
 
-	// NewCounter creates a new Counter.
-	NewCounter := func() (*Counter, error) {
-		c := &Counter{}
-		act, err := actor.Go(actor.DefaultConfig())
-		if err != nil {
-			return nil, err
-		}
-		c.act = act
-		return c, nil
+	// Create actor with initial state
+	cfg := actor.NewConfig(context.Background())
+	counter, err := actor.Go(Counter{value: 0}, cfg)
+	if err != nil {
+		panic(err)
 	}
+	defer counter.Stop()
 
-	// Increment increases the counter's value by one.
-	Increment := func(c *Counter) {
-		c.act.DoAsync(func() {
-			c.value++
-		})
-	}
-
-	// Value returns the current value of the counter.
-	Value := func(c *Counter) int {
-		var value int
-		c.act.DoSync(func() {
-			value = c.value
-		})
-		return value
-	}
-
-	// Stop stops the counter's actor.
-	Stop := func(c *Counter) {
-		c.act.Stop()
-	}
-
-	// Usage:
-	counter, err := NewCounter()
+	// Perform a synchronous action on the state
+	err = counter.Do(func(s *Counter) {
+		s.value++
+		fmt.Printf("Counter value: %d\n", s.value)
+	})
 	if err != nil {
 		panic(err)
 	}
 
-	// Increment the counter ten times concurrently.
+	// Output:
+	// Counter value: 1
+}
+
+// Example_bankAccount shows how to use an actor to protect complex state.
+func Example_bankAccount() {
+	type Account struct {
+		balance int
+		name    string
+	}
+
+	cfg := actor.NewConfig(context.Background())
+	account, err := actor.Go(Account{balance: 100, name: "Savings"}, cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer account.Stop()
+
+	// Deposit money
+	_ = account.Do(func(s *Account) {
+		s.balance += 50
+	})
+
+	// Withdraw with validation using Update
+	withdrawn, err := account.Update(func(s *Account) (any, error) {
+		if s.balance >= 30 {
+			s.balance -= 30
+			return true, nil
+		}
+		return false, fmt.Errorf("insufficient funds")
+	})
+
+	fmt.Printf("Withdrawn: %v, Error: %v\n", withdrawn, err)
+
+	// Check balance
+	balance, _ := account.Query(func(s *Account) any {
+		return s.balance
+	})
+
+	fmt.Printf("Final balance: %d\n", balance)
+	// Output:
+	// Withdrawn: true, Error: <nil>
+	// Final balance: 120
+}
+
+// Example_configuration demonstrates the fluent configuration builder pattern.
+func Example_configuration() {
+	ctx := context.Background()
+
+	cfg := actor.NewConfig(ctx).
+		SetQueueCapacity(512).
+		SetActionTimeout(5 * time.Second).
+		SetShutdownTimeout(10 * time.Second).
+		SetFinalizer(func(err error) error {
+			fmt.Println("Actor stopped")
+			return nil
+		})
+
+	// Check for configuration errors
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Invalid config: %v", err)
+	}
+
+	type State struct{ count int }
+	act, _ := actor.Go(State{}, cfg)
+	defer act.Stop()
+
+	fmt.Println("Actor configured and running")
+	// Output:
+	// Actor configured and running
+}
+
+// Example_withContext demonstrates using a context to control the actor's lifecycle.
+func Example_withContext() {
+	// Create a context that can be canceled
+	ctx, cancel := context.WithCancel(context.Background())
+
+	type State struct{ running bool }
+	cfg := actor.NewConfig(ctx)
+	act, _ := actor.Go(State{running: true}, cfg)
+
+	// Actor runs
+	fmt.Printf("Running: %v\n", act.IsRunning())
+
+	// Cancel context
+	cancel()
+	<-act.Done()
+
+	// Actor stopped
+	fmt.Printf("Running: %v\n", act.IsRunning())
+	// Output:
+	// Running: true
+	// Running: false
+}
+
+// Example_finalizer shows how to use a finalizer to clean up resources.
+func Example_finalizer() {
+	type Resource struct {
+		connections int
+	}
+
+	cfg := actor.NewConfig(context.Background()).
+		SetFinalizer(func(err error) error {
+			fmt.Printf("Cleanup called\n")
+			return nil
+		})
+
+	resource, _ := actor.Go(Resource{connections: 5}, cfg)
+
+	_ = resource.Do(func(s *Resource) {
+		s.connections++
+	})
+
+	resource.Stop()
+	<-resource.Done()
+
+	// Output: Cleanup called
+}
+
+// Example_repeatingActions demonstrates repeating actions at intervals.
+func Example_repeatingActions() {
+	type Stats struct {
+		checks int
+	}
+
+	cfg := actor.NewConfig(context.Background())
+	stats, _ := actor.Go(Stats{}, cfg)
+	defer stats.Stop()
+
+	// Run health check every 50ms
+	stop := stats.Repeat(50*time.Millisecond, func(s *Stats) {
+		s.checks++
+		if s.checks <= 3 {
+			fmt.Printf("Check %d\n", s.checks)
+		}
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	stop() // Stop repeating
+
+	// Output:
+	// Check 1
+	// Check 2
+	// Check 3
+}
+
+// Example_syncAndAsync demonstrates synchronous and asynchronous actions.
+func Example_syncAndAsync() {
+	type Counter struct {
+		value int
+	}
+
+	cfg := actor.NewConfig(context.Background())
+	counter, _ := actor.Go(Counter{value: 0}, cfg)
+	defer counter.Stop()
+
+	// Synchronous action (blocks until complete)
+	counter.Do(func(s *Counter) {
+		s.value++
+		fmt.Println("Sync: incremented")
+	})
+
+	// Asynchronous action (returns immediately)
+	counter.DoAsync(func(s *Counter) {
+		s.value++
+		fmt.Println("Async: incremented")
+	})
+
+	// Wait for async to complete
+	time.Sleep(10 * time.Millisecond)
+
+	// Get final value
+	value, _ := counter.Query(func(s *Counter) any {
+		return s.value
+	})
+	fmt.Printf("Final value: %d\n", value)
+
+	// Output:
+	// Sync: incremented
+	// Async: incremented
+	// Final value: 2
+}
+
+// Example_concurrentSafety demonstrates true encapsulation and concurrent safety.
+func Example_concurrentSafety() {
+	type Counter struct {
+		value int
+	}
+
+	cfg := actor.NewConfig(context.Background())
+	counter, _ := actor.Go(Counter{value: 0}, cfg)
+	defer counter.Stop()
+
+	// Increment the counter ten times concurrently
 	for range 10 {
-		go Increment(counter)
+		go counter.DoAsync(func(s *Counter) {
+			s.value++
+		})
 	}
 
-	// Wait for the increments to complete.
-	// A sync call will block until all async calls are done.
-	cvalue := 0
-	for cvalue < 10 {
-		time.Sleep(10 * time.Millisecond)
-		cvalue = Value(counter)
-	}
+	// Wait for all increments to complete
+	time.Sleep(50 * time.Millisecond)
 
-	fmt.Printf("Counter value: %d", cvalue)
-
-	Stop(counter)
+	// Get final value - guaranteed to be 10 due to serialization
+	value, _ := counter.Query(func(s *Counter) any {
+		return s.value
+	})
+	fmt.Printf("Counter value: %d\n", value)
 
 	// Output:
 	// Counter value: 10
+}
+
+// Example_timeout demonstrates action timeout handling.
+func Example_timeout() {
+	type Processor struct{}
+
+	cfg := actor.NewConfig(context.Background()).
+		SetActionTimeout(50 * time.Millisecond)
+
+	proc, _ := actor.Go(Processor{}, cfg)
+	defer proc.Stop()
+
+	// This will timeout
+	err := proc.Do(func(s *Processor) {
+		time.Sleep(100 * time.Millisecond)
+	})
+
+	if err != nil {
+		fmt.Println("Action timed out")
+	}
+
+	// Output:
+	// Action timed out
+}
+
+// Example_errorHandling demonstrates error handling from actions.
+func Example_errorHandling() {
+	type Account struct {
+		balance int
+	}
+
+	cfg := actor.NewConfig(context.Background())
+	account, _ := actor.Go(Account{balance: 100}, cfg)
+	defer account.Stop()
+
+	// Try to withdraw more than balance
+	err := account.DoWithError(func(s *Account) error {
+		if s.balance < 200 {
+			return fmt.Errorf("insufficient funds")
+		}
+		s.balance -= 200
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+	}
+
+	// Output:
+	// Error: insufficient funds
 }

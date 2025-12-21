@@ -1,4 +1,4 @@
-// Tideland Go Actor - Unit Tests
+// Tideland Go Actor - Mass Tests
 //
 // Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
@@ -8,6 +8,7 @@
 package actor_test
 
 import (
+	"context"
 	"math/rand"
 	"testing"
 	"time"
@@ -17,22 +18,26 @@ import (
 	"tideland.dev/go/actor"
 )
 
-// TestMass verifies the starting and stopping an Actor.
+// TestMass verifies large scale concurrent actor usage with ping-pong pattern.
 func TestMass(t *testing.T) {
-	pps := make([]*PingPong, 1000)
+	// Create 1000 ping-pong actors
+	pps := make([]*PingPongActor, 1000)
 	for i := range pps {
-		pps[i] = NewPingPong(pps)
+		pps[i] = NewPingPongActor(pps)
 	}
-	// Let's start the ping pong party.
+
+	// Start the ping pong party
 	for range 5 {
 		n := rand.Intn(len(pps))
 		pps[n].Ping()
 		n = rand.Intn(len(pps))
 		pps[n].Pong()
 	}
-	// Let's wait one seconds before stopping.
+
+	// Let it run for a second
 	time.Sleep(1 * time.Second)
-	// Let's check some random ping pong pairs.
+
+	// Check some random ping pong pairs
 	for _, pp := range pps {
 		pings, pongs := pp.PingPongs()
 		verify.True(t, pings > 0)
@@ -41,86 +46,91 @@ func TestMass(t *testing.T) {
 	}
 }
 
-// TestPerformance verifies the starting and stopping an Actor.
+// TestPerformance verifies actor performance with many async operations.
 func TestPerformance(t *testing.T) {
-	finalized := make(chan struct{})
-	cfg := actor.DefaultConfig()
-	cfg.Finalizer = func(err error) error {
-		defer close(finalized)
-		return err
-	}
-	act, err := actor.Go(cfg)
+	type State struct{}
+
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(State{}, cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
 
 	now := time.Now()
 	for range 10000 {
-		act.DoAsync(func() {})
+		act.DoAsync(func(s *State) {})
 	}
 	duration := time.Since(now)
-	verify.True(t, duration < 100*time.Millisecond)
+	verify.True(t, duration < 100*time.Millisecond, "Queueing 10000 operations took too long")
 
 	act.Stop()
+	<-act.Done()
 
-	<-finalized
-
-	verify.NoError(t, act.Err())
+	// Actor stopped normally - will have a shutdown error
+	verify.Error(t, act.Err())
 }
 
-type PingPong struct {
-	pps   []*PingPong
+// PingPongState holds the state for a ping-pong actor.
+type PingPongState struct {
 	pings int
 	pongs int
-
-	act *actor.Actor
 }
 
-func NewPingPong(pps []*PingPong) *PingPong {
-	pp := &PingPong{
-		pps:   pps,
-		pings: 0,
-		pongs: 0,
-	}
-	cfg := actor.DefaultConfig()
-	cfg.QueueCap = 256
-	act, err := actor.Go(cfg)
+// PingPongActor wraps an actor with ping-pong convenience methods.
+type PingPongActor struct {
+	act *actor.Actor[PingPongState]
+	pps []*PingPongActor
+}
+
+// NewPingPongActor creates a new ping-pong actor.
+func NewPingPongActor(pps []*PingPongActor) *PingPongActor {
+	cfg := actor.NewConfig(context.Background()).
+		SetQueueCapacity(256)
+
+	act, err := actor.Go(PingPongState{}, cfg)
 	if err != nil {
 		panic(err)
 	}
-	pp.act = act
-	return pp
+
+	return &PingPongActor{
+		act: act,
+		pps: pps,
+	}
 }
 
-func (pp *PingPong) Ping() {
-	pp.act.DoAsync(func() {
-		pp.pings++
+// Ping increments pings and triggers a random Pong.
+func (pp *PingPongActor) Ping() {
+	pp.act.DoAsync(func(s *PingPongState) {
+		s.pings++
 		n := rand.Intn(len(pp.pps))
 		pp.pps[n].Pong()
 	})
 }
 
-func (pp *PingPong) Pong() {
-	pp.act.DoAsync(func() {
-		pp.pongs++
+// Pong increments pongs and triggers a random Ping.
+func (pp *PingPongActor) Pong() {
+	pp.act.DoAsync(func(s *PingPongState) {
+		s.pongs++
 		n := rand.Intn(len(pp.pps))
 		pp.pps[n].Ping()
 	})
 }
 
-func (pp *PingPong) PingPongs() (int, int) {
-	var pings int
-	var pongs int
-	pp.act.DoSync(func() {
-		pings = pp.pings
-		pongs = pp.pongs
+// PingPongs returns the current ping and pong counts.
+func (pp *PingPongActor) PingPongs() (int, int) {
+	var pings, pongs int
+	pp.act.Do(func(s *PingPongState) {
+		pings = s.pings
+		pongs = s.pongs
 	})
 	return pings, pongs
 }
 
-func (pp *PingPong) Err() error {
+// Err returns any error from the actor.
+func (pp *PingPongActor) Err() error {
 	return pp.act.Err()
 }
 
-func (pp *PingPong) Stop() {
+// Stop stops the actor.
+func (pp *PingPongActor) Stop() {
 	pp.act.Stop()
 }

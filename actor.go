@@ -1,296 +1,408 @@
-// Tideland Go Actor
-//
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
-//
-// All rights reserved. Use of this source code is governed
-// by the new BSD license.
-
 package actor
+
+// Actor - Encapsulates state of type S and ensures all access is serialized.
+// Actor OWNS the state, making race conditions impossible by design.
+//
+// This follows the Erlang/OTP process model where:
+// - The actor encapsulates state (like an Erlang process)
+// - State is only accessible through message passing (closures)
+// - All state modifications are serialized automatically
+//
+// Panics in actions will crash the actor's goroutine (as they should in Go).
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
 )
 
-// Action defines the signature of an actor action.
-type Action func()
-
-// Recoverer defines the signature of a function for recovering
-// from a panic during executing an action. The reason is the
-// panic value. The function should return the error to be
-// returned by the Actor. If the error is nil, the Actor will
-// continue to work.
-type Recoverer func(reason any) error
-
-// Finalizer defines the signature of a function for finalizing
-// the work of an Actor. The error is the one returned by the
-// Actor.
+// Finalizer is a function called when an actor stops.
+// It receives the error that caused the shutdown (if any).
+// Returning an error replaces the shutdown error.
 type Finalizer func(err error) error
 
-// request wraps an action with its context.
-type request struct {
-	ctx    context.Context
-	done   chan struct{}
-	err    error
-	action Action
-}
-
-// newRequest creates a request including a done channel. The
-// Action is wrapped with a closure which closes the done channel
-// after the action has been executed.
-func newRequest(ctx context.Context, action Action) *request {
-	return &request{
-		ctx:    ctx,
-		done:   make(chan struct{}),
-		action: action,
-	}
-}
-
-// execute checks if the request context is canceled or timed out.
-// If not, it performs the action and closes the done channel.
-func (req *request) execute() {
-	defer close(req.done)
-	select {
-	case <-req.ctx.Done():
-		req.err = req.ctx.Err()
-	default:
-		req.action()
-	}
-}
-
-// Actor introduces the actor model, where calls are executed
-// sequentially in a backend goroutine.
-// QueueStatus provides information about the actor's request queue
+// QueueStatus contains information about the actor's request queue.
 type QueueStatus struct {
 	Length   int  // Current number of queued requests
 	Capacity int  // Maximum queue capacity
-	IsFull   bool // Whether queue is at capacity
+	IsFull   bool // Whether the queue is at capacity
 }
 
-type Actor struct {
-	ctx       context.Context
-	cancel    func()
-	requests  chan *request
-	recoverer Recoverer
-	finalizer Finalizer
-	err       atomic.Pointer[error]
-	started   chan struct{}
-	done      chan struct{}
-	timeout   time.Duration // default timeout for actions from config
-	status    atomic.Bool
+// Actor encapsulates state of type S and processes actions sequentially.
+type Actor[S any] struct {
+	state    S
+	requests chan *request[S]
+	ctx      context.Context
+	cancel   func()
+	err      atomic.Pointer[error]
+	status   atomic.Bool
+	done     chan struct{}
+	config   *Config
 }
 
-// Go starts an Actor with the given configuration.
-func Go(cfg Config) (*Actor, error) {
-	// Validate configuration.
+// request represents a queued action to be performed on the state
+type request[S any] struct {
+	ctx    context.Context
+	action func(*S) error
+	done   chan error
+}
+
+// Go starts a new actor with the given initial state and configuration.
+// The state is fully encapsulated and can only be accessed through Do methods.
+//
+// Example:
+//
+//	type Counter struct { value int }
+//	actor, err := actor.Go(Counter{}, actor.NewConfig(ctx))
+func Go[S any](initialState S, cfg *Config) (*Actor[S], error) {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+
+	// Validate configuration
 	if err := cfg.Validate(); err != nil {
-		return nil, NewError("Go", err, ErrInvalid)
+		return nil, err
 	}
 
-	// Create actor with validated config.
-	act := &Actor{
-		requests:  make(chan *request, cfg.QueueCap),
-		recoverer: cfg.Recoverer,
-		finalizer: cfg.Finalizer,
-		started:   make(chan struct{}),
-		timeout:   cfg.ActionTimeout,
+	ctx, cancel := context.WithCancel(cfg.Context())
+
+	a := &Actor[S]{
+		state:    initialState,
+		requests: make(chan *request[S], cfg.QueueCapacity()),
+		ctx:      ctx,
+		cancel:   cancel,
+		done:     make(chan struct{}),
+		config:   cfg,
 	}
 
-	// Set up context with cancellation.
-	act.ctx, act.cancel = context.WithCancel(cfg.Context)
-
-	// Start the backend.
-	go act.backend()
-
-	// Synchronize with the actor to ensure it has started.
-	act.waitStarted()
-
-	return act, nil
+	go a.run()
+	return a, nil
 }
 
-// DoAsync sends the actor function to the backend goroutine and returns
-// when it's queued.
-func (act *Actor) DoAsync(action Action) error {
-	return act.DoAsyncWithContext(context.Background(), action)
-}
+// run is the main goroutine that processes all state modifications sequentially.
+// Panics in actions will crash this goroutine and stop the actor.
+func (a *Actor[S]) run() {
+	defer close(a.done)
+	defer a.status.Store(true)
 
-// DoAsyncWithContext sends the actor function to the backend and returns
-// when it's queued. A context allows to cancel the action or add a timeout.
-func (act *Actor) DoAsyncWithContext(ctx context.Context, action Action) error {
-	req := newRequest(ctx, action)
-	return act.send(req)
-}
+	var finalErr error
 
-// DoSync executes the actor function and returns when it's done.
-func (act *Actor) DoSync(action Action) error {
-	return act.DoSyncWithContext(context.Background(), action)
-}
+	// Call finalizer when we exit (if configured)
+	defer func() {
+		if finalizer := a.config.Finalizer(); finalizer != nil {
+			if err := finalizer(finalErr); err != nil {
+				finalErr = err
+			}
+		}
+		a.err.Store(&finalErr)
+	}()
 
-// DoSyncWithContext executes the action and returns when it's done.
-// A context allows to cancel the action or add a timeout.
-func (act *Actor) DoSyncWithContext(ctx context.Context, action Action) error {
-	req := newRequest(ctx, action)
-	err := act.send(req)
-	if err != nil {
-		return err
+	for {
+		select {
+		case <-a.ctx.Done():
+			finalErr = &ActorError{
+				Op:   "run",
+				Err:  a.ctx.Err(),
+				Code: ErrShutdown,
+			}
+			return
+
+		case req := <-a.requests:
+			err := a.executeRequest(req)
+			if err != nil {
+				// Error from action execution, stop actor
+				finalErr = err
+				return
+			}
+		}
 	}
-	return act.wait(req)
 }
 
-// waitStarted synchronizes with the actor to ensure it has started.
-func (act *Actor) waitStarted() {
-	<-act.started
-}
+// executeRequest runs a single request.
+// Returns error only if the action fails and it's an async action
+// (which causes the actor to stop).
+func (a *Actor[S]) executeRequest(req *request[S]) error {
+	// Check if request context is done
+	select {
+	case <-req.ctx.Done():
+		err := &ActorError{
+			Op:   "execute",
+			Err:  req.ctx.Err(),
+			Code: ErrCanceled,
+		}
+		if req.done != nil {
+			req.done <- err
+		}
+		return nil
+	default:
+	}
 
-// Done returns a channel that is closed when the Actor terminates.
-func (act *Actor) Done() <-chan struct{} {
-	return act.done
-}
+	var actionErr error
 
-// IsDone allows to simply check if the Actor is done in a select
-// or if statement.
-func (act *Actor) IsDone() bool {
-	return act.status.Load()
-}
+	// Apply action timeout if configured
+	if timeout := a.config.ActionTimeout(); timeout > 0 {
+		ctx, cancel := context.WithTimeout(req.ctx, timeout)
+		defer cancel()
 
-// IsRunning allows to simply check if the Actor is running.
-func (act *Actor) IsRunning() bool {
-	return !act.status.Load()
-}
+		done := make(chan struct{})
+		go func() {
+			actionErr = req.action(&a.state)
+			close(done)
+		}()
 
-// Err returns information if the Actor has an error.
-func (act *Actor) Err() error {
-	err := act.err.Load()
-	if err == nil {
+		select {
+		case <-done:
+			// Action completed
+		case <-ctx.Done():
+			actionErr = &ActorError{
+				Op:   "execute",
+				Err:  ctx.Err(),
+				Code: ErrTimeout,
+			}
+		}
+	} else {
+		// No timeout, execute directly
+		actionErr = req.action(&a.state)
+	}
+
+	// Send result back if synchronous
+	if req.done != nil {
+		req.done <- actionErr
 		return nil
 	}
-	return *err
+
+	// Async action - if it failed, stop the actor
+	return actionErr
 }
 
-// Stop terminates the Actor backend.
-func (act *Actor) Stop() {
-	if act.IsDone() {
-		return
+// Do executes an action synchronously on the encapsulated state.
+// The action receives a pointer to the state and can modify it.
+// This blocks until the action completes.
+//
+// Example:
+//
+//	err := actor.Do(func(s *Counter) {
+//	    s.value++
+//	})
+func (a *Actor[S]) Do(action func(*S)) error {
+	return a.DoWithError(func(s *S) error {
+		action(s)
+		return nil
+	})
+}
+
+// DoWithError executes an action synchronously that can return an error.
+func (a *Actor[S]) DoWithError(action func(*S) error) error {
+	return a.DoWithErrorContext(a.ctx, action)
+}
+
+// DoWithErrorContext executes an action synchronously with a custom context.
+func (a *Actor[S]) DoWithErrorContext(ctx context.Context, action func(*S) error) error {
+	if a.IsDone() {
+		return &ActorError{
+			Op:   "do",
+			Err:  a.Err(),
+			Code: ErrShutdown,
+		}
 	}
-	act.cancel()
+
+	req := &request[S]{
+		ctx:    ctx,
+		action: action,
+		done:   make(chan error, 1),
+	}
+
+	select {
+	case a.requests <- req:
+		return <-req.done
+	case <-ctx.Done():
+		return &ActorError{
+			Op:   "do",
+			Err:  ctx.Err(),
+			Code: ErrCanceled,
+		}
+	case <-a.ctx.Done():
+		return &ActorError{
+			Op:   "do",
+			Err:  a.ctx.Err(),
+			Code: ErrShutdown,
+		}
+	}
 }
 
-// QueueStatus returns the current status of the action queue
-func (act *Actor) QueueStatus() QueueStatus {
+// DoWithErrorTimeout executes an action with a timeout.
+func (a *Actor[S]) DoWithErrorTimeout(timeout time.Duration, action func(*S) error) error {
+	ctx, cancel := context.WithTimeout(a.ctx, timeout)
+	defer cancel()
+	return a.DoWithErrorContext(ctx, action)
+}
+
+// DoAsync executes an action asynchronously on the state.
+// Returns immediately without waiting for the action to complete.
+// If the action returns an error, the actor will stop.
+//
+// Example:
+//
+//	err := actor.DoAsync(func(s *Counter) {
+//	    s.value++
+//	})
+func (a *Actor[S]) DoAsync(action func(*S)) error {
+	return a.DoAsyncWithError(func(s *S) error {
+		action(s)
+		return nil
+	})
+}
+
+// DoAsyncWithError executes an action asynchronously that can return an error.
+// Errors from async actions will cause the actor to stop.
+func (a *Actor[S]) DoAsyncWithError(action func(*S) error) error {
+	return a.DoAsyncWithErrorContext(a.ctx, action)
+}
+
+// DoAsyncWithErrorContext executes an action asynchronously with a custom context.
+func (a *Actor[S]) DoAsyncWithErrorContext(ctx context.Context, action func(*S) error) error {
+	if a.IsDone() {
+		return &ActorError{
+			Op:   "do-async",
+			Err:  a.Err(),
+			Code: ErrShutdown,
+		}
+	}
+
+	req := &request[S]{
+		ctx:    ctx,
+		action: action,
+		done:   nil, // No response channel = async
+	}
+
+	select {
+	case a.requests <- req:
+		return nil
+	case <-ctx.Done():
+		return &ActorError{
+			Op:   "do-async",
+			Err:  ctx.Err(),
+			Code: ErrCanceled,
+		}
+	case <-a.ctx.Done():
+		return &ActorError{
+			Op:   "do-async",
+			Err:  a.ctx.Err(),
+			Code: ErrShutdown,
+		}
+	}
+}
+
+// Query retrieves a value from the state synchronously.
+// This is a convenience method for read-only operations.
+//
+// Example:
+//
+//	value, err := actor.Query(func(s *Counter) int {
+//	    return s.value
+//	})
+func (a *Actor[S]) Query(getter func(*S) any) (any, error) {
+	var result any
+	err := a.Do(func(s *S) {
+		result = getter(s)
+	})
+	return result, err
+}
+
+// Update modifies the state and returns a result in a single atomic operation.
+// This is useful when you need to both modify state and return something.
+//
+// Example:
+//
+//	oldValue, err := actor.Update(func(s *Counter) (int, error) {
+//	    old := s.value
+//	    s.value++
+//	    return old, nil
+//	})
+func (a *Actor[S]) Update(updater func(*S) (any, error)) (any, error) {
+	var result any
+	err := a.DoWithError(func(s *S) error {
+		var err error
+		result, err = updater(s)
+		return err
+	})
+	return result, err
+}
+
+// Stop gracefully shuts down the actor.
+func (a *Actor[S]) Stop() {
+	a.cancel()
+}
+
+// Done returns a channel that is closed when the actor stops.
+func (a *Actor[S]) Done() <-chan struct{} {
+	return a.done
+}
+
+// IsDone returns true if the actor has stopped.
+func (a *Actor[S]) IsDone() bool {
+	return a.status.Load()
+}
+
+// IsRunning returns true if the actor is still running.
+func (a *Actor[S]) IsRunning() bool {
+	return !a.IsDone()
+}
+
+// Err returns any error that caused the actor to stop.
+func (a *Actor[S]) Err() error {
+	if err := a.err.Load(); err != nil {
+		return *err
+	}
+	return nil
+}
+
+// QueueStatus returns information about the request queue.
+func (a *Actor[S]) QueueStatus() QueueStatus {
+	length := len(a.requests)
+	capacity := cap(a.requests)
 	return QueueStatus{
-		Length:   len(act.requests),
-		Capacity: cap(act.requests),
-		IsFull:   len(act.requests) == cap(act.requests),
+		Length:   length,
+		Capacity: capacity,
+		IsFull:   length == capacity,
 	}
 }
 
-// DoSyncTimeout executes the action with a specific timeout
-func (act *Actor) DoSyncTimeout(timeout time.Duration, action Action) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	return act.DoSyncWithContext(ctx, action)
+// Repeat executes an action at regular intervals until stopped.
+// Returns a function that stops the repetition.
+//
+// Example:
+//
+//	stop := actor.Repeat(1*time.Second, func(s *Counter) {
+//	    log.Printf("Counter value: %d", s.value)
+//	})
+//	defer stop()
+func (a *Actor[S]) Repeat(interval time.Duration, action func(*S)) func() {
+	return a.RepeatWithContext(a.ctx, interval, action)
 }
 
-// DoAsyncTimeout sends the action to the backend with a specific timeout
-func (act *Actor) DoAsyncTimeout(timeout time.Duration, action Action) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	return act.DoAsyncWithContext(ctx, action)
-}
+// RepeatWithContext executes an action at intervals with cancellation support.
+func (a *Actor[S]) RepeatWithContext(ctx context.Context, interval time.Duration, action func(*S)) func() {
+	ctx, cancel := context.WithCancel(ctx)
 
-// send sends a request to the backend.
-func (act *Actor) send(req *request) error {
-	// Check if we're error free and still working.
-	if act.err.Load() != nil {
-		return *act.err.Load()
-	}
-	if act.IsDone() {
-		return fmt.Errorf("actor is done")
-	}
-	// Apply action timeout if configured
-	if act.timeout > 0 && req.ctx == context.Background() {
-		var cancel context.CancelFunc
-		req.ctx, cancel = context.WithTimeout(req.ctx, act.timeout)
-		defer cancel()
-	}
-	// Send the request to the backend.
-	select {
-	case act.requests <- req:
-	case <-req.ctx.Done():
-		return fmt.Errorf("action context sending: %w", req.ctx.Err())
-	case <-act.ctx.Done():
-		return fmt.Errorf("actor context sending: %w", act.ctx.Err())
-	}
-	return nil
-}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 
-// wait waits for synchronous requests to be done or returning an error.
-func (act *Actor) wait(req *request) error {
-	select {
-	case <-req.done:
-	case <-req.ctx.Done():
-		return NewError("wait", fmt.Errorf("action context: %w", req.ctx.Err()), ErrCanceled)
-	case <-act.ctx.Done():
-		return NewError("wait", fmt.Errorf("actor context: %w", act.ctx.Err()), ErrShutdown)
-	}
-	if req.err != nil {
-		return NewError("wait", req.err, ErrCanceled)
-	}
-	return nil
-}
-
-// backend runs the goroutine of the Actor.
-func (act *Actor) backend() {
-	defer act.finalize()
-	close(act.started)
-
-	act.done = make(chan struct{})
-
-	// Work as long as we're not stopped.
-	for !act.IsDone() {
-		act.work()
-	}
-}
-
-// work runs the select in a loop, including
-// a possible repairer.
-func (act *Actor) work() {
-	defer func() {
-		// Check panics and possibly send notification.
-		if reason := recover(); reason != nil {
-			err := act.recoverer(reason)
-			if err != nil {
-				act.err.Store(&err)
-				act.status.Store(true)
-				close(act.done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.ctx.Done():
+				return
+			case <-ticker.C:
+				_ = a.DoAsyncWithErrorContext(ctx, func(s *S) error {
+					action(s)
+					return nil
+				})
 			}
 		}
 	}()
-	// Select in loop.
-	for {
-		select {
-		case <-act.ctx.Done():
-			act.status.Store(true)
-			close(act.done)
-			return
-		case req := <-act.requests:
-			req.execute()
-		}
-	}
-}
 
-// finalize takes care for a clean loop finalization.
-func (act *Actor) finalize() {
-	var ferr error
-	err := act.err.Load()
-	if err != nil {
-		ferr = act.finalizer(*err)
-	} else {
-		ferr = act.finalizer(nil)
-	}
-	if ferr != nil {
-		act.err.Store(&ferr)
-	}
+	return cancel
 }

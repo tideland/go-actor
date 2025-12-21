@@ -1,84 +1,142 @@
-// Tideland Go Actor
-//
-// Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
-//
-// All rights reserved. Use of this source code is governed
-// by the new BSD license.
-
 package actor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
 
-// Config contains all configuration options for an Actor.
+// Config configures an Actor using fluent builder pattern.
+// All fields are private and accessed via getters. Validation errors are
+// accumulated and can be checked before creating the actor.
 type Config struct {
-	// Context defines the lifetime of the Actor. If nil,
-	// context.Background() will be used.
-	Context context.Context
+	// Configuration fields
+	ctx             context.Context
+	queueCapacity   int
+	actionTimeout   time.Duration
+	shutdownTimeout time.Duration
+	finalizer       Finalizer
 
-	// QueueCap defines the capacity of the action queue.
-	// Must be positive, default is 256.
-	QueueCap int
-
-	// Recoverer is called when a panic occurs during action
-	// execution. If nil, a default recoverer will be used
-	// that wraps the panic value in an error.
-	Recoverer Recoverer
-
-	// Finalizer is called when the Actor stops. It receives
-	// any error that caused the stop and can transform it.
-	// If nil, a default finalizer will be used that returns
-	// the error unchanged.
-	Finalizer Finalizer
-
-	// ActionTimeout defines a default timeout for all actions.
-	// If set to 0 (default), no timeout is applied.
-	// Can be overridden per action using DoSyncTimeout or DoAsyncTimeout.
-	ActionTimeout time.Duration
+	// Error accumulation
+	err error
 }
 
-// DefaultConfig returns a Config with default values.
-func DefaultConfig() Config {
-	return Config{
-		Context:       context.Background(),
-		QueueCap:      256,
-		Recoverer:     defaultRecoverer,
-		Finalizer:     defaultFinalizer,
-		ActionTimeout: 0, // no default timeout
+// NewConfig creates a new configuration with the given context.
+// All other fields are set to sensible defaults.
+func NewConfig(ctx context.Context) *Config {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &Config{
+		ctx:             ctx,
+		queueCapacity:   256,
+		actionTimeout:   0, // No timeout by default
+		shutdownTimeout: 5 * time.Second,
+		finalizer:       nil,
 	}
 }
 
-// Validate checks if the configuration is valid and
-// sets default values where needed.
+// DefaultConfig creates a configuration with all default values.
+func DefaultConfig() *Config {
+	return NewConfig(context.Background())
+}
+
+// SetContext sets the context for the actor's lifecycle.
+func (c *Config) SetContext(ctx context.Context) *Config {
+	if ctx == nil {
+		c.wrapError(fmt.Errorf("context cannot be nil"))
+		return c
+	}
+	c.ctx = ctx
+	return c
+}
+
+// SetQueueCapacity sets the maximum number of pending requests.
+// Must be positive.
+func (c *Config) SetQueueCapacity(capacity int) *Config {
+	if capacity <= 0 {
+		c.wrapError(fmt.Errorf("queue capacity must be positive, got %d", capacity))
+		return c
+	}
+	c.queueCapacity = capacity
+	return c
+}
+
+// SetActionTimeout sets the maximum time an action can run.
+// Zero means no timeout. Negative values are rejected.
+func (c *Config) SetActionTimeout(timeout time.Duration) *Config {
+	if timeout < 0 {
+		c.wrapError(fmt.Errorf("action timeout cannot be negative, got %v", timeout))
+		return c
+	}
+	c.actionTimeout = timeout
+	return c
+}
+
+// SetShutdownTimeout sets the maximum time to wait for graceful shutdown.
+// Must be positive.
+func (c *Config) SetShutdownTimeout(timeout time.Duration) *Config {
+	if timeout <= 0 {
+		c.wrapError(fmt.Errorf("shutdown timeout must be positive, got %v", timeout))
+		return c
+	}
+	c.shutdownTimeout = timeout
+	return c
+}
+
+// SetFinalizer sets a function to be called when the actor stops.
+// The finalizer receives the error that caused the shutdown (if any).
+func (c *Config) SetFinalizer(finalizer Finalizer) *Config {
+	c.finalizer = finalizer
+	return c
+}
+
+// Getters
+
+// Context returns the configured context.
+func (c *Config) Context() context.Context {
+	return c.ctx
+}
+
+// QueueCapacity returns the configured queue capacity.
+func (c *Config) QueueCapacity() int {
+	return c.queueCapacity
+}
+
+// ActionTimeout returns the configured action timeout.
+func (c *Config) ActionTimeout() time.Duration {
+	return c.actionTimeout
+}
+
+// ShutdownTimeout returns the configured shutdown timeout.
+func (c *Config) ShutdownTimeout() time.Duration {
+	return c.shutdownTimeout
+}
+
+// Finalizer returns the configured finalizer function.
+func (c *Config) Finalizer() Finalizer {
+	return c.finalizer
+}
+
+// Error accumulation
+
+// wrapError adds an error to the accumulated errors.
+func (c *Config) wrapError(err error) {
+	if c.err == nil {
+		c.err = err
+	} else {
+		c.err = errors.Join(c.err, err)
+	}
+}
+
+// Validate returns any accumulated validation errors.
+// This is called automatically by Go(), but can be called earlier to check.
 func (c *Config) Validate() error {
-	// Set defaults for nil values.
-	if c.Context == nil {
-		c.Context = context.Background()
-	}
-	if c.QueueCap < 1 {
-		return NewError("Config.Validate", fmt.Errorf("queue capacity must be positive: %d", c.QueueCap), ErrInvalid)
-	}
-	if c.Recoverer == nil {
-		c.Recoverer = defaultRecoverer
-	}
-	if c.Finalizer == nil {
-		c.Finalizer = defaultFinalizer
-	}
-	return nil
+	return c.err
 }
 
-// defaultRecoverer creates an error from a panic.
-func defaultRecoverer(reason any) error {
-	return NewError("Recover", fmt.Errorf("panic: %v", reason), ErrPanic)
-}
-
-// defaultFinalizer wraps any error in a shutdown error.
-func defaultFinalizer(err error) error {
-	if err != nil {
-		return NewError("Finalize", err, ErrShutdown)
-	}
-	return nil
+// Error is an alias for Validate() for consistency with worker package.
+func (c *Config) Error() error {
+	return c.err
 }

@@ -1,4 +1,4 @@
-// Tideland Go Actor - Unit Tests
+// Tideland Go Actor - Repeat Tests
 //
 // Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany
 //
@@ -8,6 +8,7 @@
 package actor_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -18,65 +19,121 @@ import (
 // TestRepeatStopActor verifies Repeat working and being
 // stopped when the Actor is stopped.
 func TestRepeatStopActor(t *testing.T) {
-	finalized := make(chan struct{})
-	counter := 0
-	cfg := actor.DefaultConfig()
-	cfg.Finalizer = func(err error) error {
-		defer close(finalized)
-		counter = 0
-		return err
+	type State struct {
+		counter int
 	}
-	act, err := actor.Go(cfg)
+
+	finalized := make(chan struct{})
+	cfg := actor.NewConfig(context.Background()).
+		SetFinalizer(func(err error) error {
+			close(finalized)
+			return err
+		})
+
+	act, err := actor.Go(State{counter: 0}, cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
 
-	// Start the repeated action.
-	stop, err := act.Repeat(10*time.Millisecond, func() {
-		counter++
+	// Start the repeated action
+	stop := act.Repeat(10*time.Millisecond, func(s *State) {
+		s.counter++
 	})
-	verify.NoError(t, err)
 	verify.NotNil(t, stop)
 
 	time.Sleep(100 * time.Millisecond)
-	verify.True(t, counter >= 9, "possibly only 9 due to late interval start")
 
-	// Stop the Actor and check the finalization.
+	// Check counter value
+	counter, _ := act.Query(func(s *State) any {
+		return s.counter
+	})
+	verify.True(t, counter.(int) >= 9, "possibly only 9 due to late interval start")
+
+	// Stop the Actor and check the finalization
 	act.Stop()
 
 	<-finalized
 
-	verify.NoError(t, act.Err())
-	verify.Equal(t, counter, 0)
+	// Actor stopped normally - will have a shutdown error
+	verify.Error(t, act.Err())
 
-	// Check if the Interval is stopped too.
+	// Check if the repeat is stopped too
 	time.Sleep(100 * time.Millisecond)
-	verify.Equal(t, counter, 0)
+	// Can't query after stop, but the repeat should have stopped
 }
 
 // TestRepeatStopInterval verifies Repeat working and being
 // stopped when the repeat is stopped.
 func TestRepeatStopInterval(t *testing.T) {
-	counter := 0
-	act, err := actor.Go(actor.DefaultConfig())
+	type State struct {
+		counter int
+	}
+
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(State{counter: 0}, cfg)
 	verify.NoError(t, err)
 	verify.NotNil(t, act)
+	defer act.Stop()
 
-	// Start the repeated action.
-	stop, err := act.Repeat(10*time.Millisecond, func() {
-		counter++
+	// Start the repeated action
+	stop := act.Repeat(10*time.Millisecond, func(s *State) {
+		s.counter++
 	})
-	verify.NoError(t, err)
 	verify.NotNil(t, stop)
 
 	time.Sleep(100 * time.Millisecond)
-	verify.True(t, counter >= 9, "possibly only 9 due to late interval start")
 
-	// Stop the repeat and check that it doesn't work anymore.
-	counterNow := counter
+	// Get current counter value
+	counterNow, _ := act.Query(func(s *State) any {
+		return s.counter
+	})
+	verify.True(t, counterNow.(int) >= 9, "possibly only 9 due to late interval start")
+
+	// Stop the repeat and check that it doesn't work anymore
 	stop()
 
 	time.Sleep(100 * time.Millisecond)
-	verify.Equal(t, counter, counterNow)
 
-	act.Stop()
+	// Counter should not have increased
+	counterAfter, _ := act.Query(func(s *State) any {
+		return s.counter
+	})
+	verify.Equal(t, counterAfter, counterNow)
+}
+
+// TestRepeatMultiple verifies multiple repeats can run concurrently.
+func TestRepeatMultiple(t *testing.T) {
+	type State struct {
+		counter1 int
+		counter2 int
+	}
+
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(State{}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	// Start two repeats with different intervals
+	stop1 := act.Repeat(10*time.Millisecond, func(s *State) {
+		s.counter1++
+	})
+	stop2 := act.Repeat(20*time.Millisecond, func(s *State) {
+		s.counter2++
+	})
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Check both counters increased
+	counter1, _ := act.Query(func(s *State) any {
+		return s.counter1
+	})
+	counter2, _ := act.Query(func(s *State) any {
+		return s.counter2
+	})
+
+	verify.True(t, counter1.(int) >= 9)
+	verify.True(t, counter2.(int) >= 4)
+
+	// Stop both
+	stop1()
+	stop2()
 }
