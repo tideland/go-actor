@@ -12,6 +12,7 @@ package actor
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -290,6 +291,88 @@ func (a *Actor[S]) DoAsyncWithErrorContext(ctx context.Context, action func(*S) 
 			Err:  a.ctx.Err(),
 			Code: ErrShutdown,
 		}
+	}
+}
+
+// DoAsyncAwait queues an action asynchronously and returns an awaiter function.
+// The awaiter blocks until the action completes and returns the action's error.
+// The awaiter function is safe to call multiple times - it will return the same
+// result each time.
+//
+// This is useful when you want to queue work immediately but wait for it later:
+//
+//	await := actor.DoAsyncAwait(func(s *Counter) {
+//	    s.value++
+//	})
+//	// Do other work...
+//	err := await() // Now wait for the action to complete
+func (a *Actor[S]) DoAsyncAwait(action func(*S)) func() error {
+	return a.DoAsyncAwaitWithError(func(s *S) error {
+		action(s)
+		return nil
+	})
+}
+
+// DoAsyncAwaitWithError queues an action that can return an error and returns an awaiter.
+// The awaiter function blocks until the action completes and returns the action's error.
+// The awaiter function is safe to call multiple times - it will return the same result each time.
+func (a *Actor[S]) DoAsyncAwaitWithError(action func(*S) error) func() error {
+	return a.DoAsyncAwaitWithErrorContext(a.ctx, action)
+}
+
+// DoAsyncAwaitWithErrorContext queues an action with a custom context and returns an awaiter.
+// The awaiter function blocks until the action completes and returns the action's error.
+// The awaiter function is safe to call multiple times - it will return the same result each time.
+func (a *Actor[S]) DoAsyncAwaitWithErrorContext(ctx context.Context, action func(*S) error) func() error {
+	// Create done channel immediately for result delivery
+	done := make(chan error, 1)
+	var queueErr error
+
+	// Try to queue the request
+	if a.IsDone() {
+		queueErr = &ActorError{
+			Op:   "do-async-await",
+			Err:  a.Err(),
+			Code: ErrShutdown,
+		}
+	} else {
+		req := &request[S]{
+			ctx:    ctx,
+			action: action,
+			done:   done, // Has done channel = result will be sent back
+		}
+
+		select {
+		case a.requests <- req:
+			// Successfully queued
+		case <-ctx.Done():
+			queueErr = &ActorError{
+				Op:   "do-async-await",
+				Err:  ctx.Err(),
+				Code: ErrCanceled,
+			}
+		case <-a.ctx.Done():
+			queueErr = &ActorError{
+				Op:   "do-async-await",
+				Err:  a.ctx.Err(),
+				Code: ErrShutdown,
+			}
+		}
+	}
+
+	// Return awaiter function that caches the result using sync.Once
+	var once sync.Once
+	var result error
+
+	return func() error {
+		once.Do(func() {
+			if queueErr != nil {
+				result = queueErr
+			} else {
+				result = <-done
+			}
+		})
+		return result
 	}
 }
 

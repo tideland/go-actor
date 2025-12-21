@@ -386,3 +386,149 @@ func TestActorAsyncError(t *testing.T) {
 	verify.True(t, act.IsDone())
 	verify.ErrorMatch(t, act.Err(), "async error")
 }
+
+// TestActorDoAsyncAwait verifies async queueing with synchronous waiting.
+func TestActorDoAsyncAwait(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	// Queue multiple actions and collect awaiters
+	awaiters := make([]func() error, 10)
+	for i := 0; i < 10; i++ {
+		awaiters[i] = act.DoAsyncAwait(func(s *Counter) {
+			s.value++
+		})
+	}
+
+	// All actions are queued, now wait for them
+	for _, await := range awaiters {
+		err := await()
+		verify.NoError(t, err)
+	}
+
+	// Verify all actions completed
+	value, err := act.Query(func(s *Counter) any {
+		return s.value
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, value.(int), 10)
+}
+
+// TestActorDoAsyncAwaitWithError verifies error handling from actions.
+func TestActorDoAsyncAwaitWithError(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	// Queue action that will fail
+	await := act.DoAsyncAwaitWithError(func(s *Counter) error {
+		return errors.New("test error")
+	})
+
+	// Wait for it and expect error
+	err = await()
+	verify.ErrorMatch(t, err, "test error")
+
+	// Actor should still be running (sync-style error handling)
+	verify.True(t, act.IsRunning())
+}
+
+// TestActorDoAsyncAwaitAfterStop verifies behavior when actor is stopped.
+func TestActorDoAsyncAwaitAfterStop(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
+	verify.NoError(t, err)
+
+	act.Stop()
+	<-act.Done()
+
+	// Try to queue after stop
+	await := act.DoAsyncAwait(func(s *Counter) {
+		s.value++
+	})
+
+	// Awaiter should return error immediately
+	err = await()
+	verify.Error(t, err)
+}
+
+// TestActorDoAsyncAwaitContext verifies context cancellation.
+func TestActorDoAsyncAwaitContext(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Queue with context
+	await := act.DoAsyncAwaitWithErrorContext(ctx, func(s *Counter) error {
+		time.Sleep(50 * time.Millisecond)
+		s.value++
+		return nil
+	})
+
+	// Cancel context before action executes
+	cancel()
+
+	// Awaiter should receive cancellation error
+	err = await()
+	verify.Error(t, err)
+}
+
+// TestActorDoAsyncAwaitNeverCalled verifies no goroutine leak.
+func TestActorDoAsyncAwaitNeverCalled(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	// Queue action but never call awaiter
+	_ = act.DoAsyncAwait(func(s *Counter) {
+		s.value++
+	})
+
+	// Wait for action to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify action executed even though awaiter wasn't called
+	value, err := act.Query(func(s *Counter) any {
+		return s.value
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, value.(int), 1)
+}
+
+// TestActorDoAsyncAwaitMultipleCalls verifies awaiter can be called multiple times.
+func TestActorDoAsyncAwaitMultipleCalls(t *testing.T) {
+	cfg := actor.NewConfig(context.Background())
+	act, err := actor.Go(Counter{value: 0}, cfg)
+	verify.NoError(t, err)
+	defer act.Stop()
+
+	// Queue action with error
+	await := act.DoAsyncAwaitWithError(func(s *Counter) error {
+		s.value = 42
+		return errors.New("test error")
+	})
+
+	// Call awaiter multiple times - should return same result
+	err1 := await()
+	err2 := await()
+	err3 := await()
+
+	verify.ErrorMatch(t, err1, "test error")
+	verify.ErrorMatch(t, err2, "test error")
+	verify.ErrorMatch(t, err3, "test error")
+
+	// Verify action only executed once
+	value, err := act.Query(func(s *Counter) any {
+		return s.value
+	})
+	verify.NoError(t, err)
+	verify.Equal(t, value.(int), 42)
+}
+

@@ -302,3 +302,42 @@ func Example_errorHandling() {
 	// Output:
 	// Error: insufficient funds
 }
+
+// Example_asyncAwait demonstrates queueing work and waiting for it later.
+func Example_asyncAwait() {
+	type Processor struct {
+		processed int
+	}
+
+	cfg := actor.NewConfig(context.Background())
+	proc, _ := actor.Go(Processor{}, cfg)
+	defer proc.Stop()
+
+	// Queue multiple operations and collect awaiters
+	var awaiters []func() error
+	for i := 0; i < 3; i++ {
+		await := proc.DoAsyncAwait(func(s *Processor) {
+			s.processed++
+		})
+		awaiters = append(awaiters, await)
+	}
+
+	fmt.Println("All operations queued")
+
+	// Do other work here...
+
+	// Now wait for all operations to complete
+	for _, await := range awaiters {
+		_ = await()
+	}
+
+	// Check result
+	count, _ := proc.Query(func(s *Processor) any {
+		return s.processed
+	})
+	fmt.Printf("Processed: %d\n", count)
+
+	// Output:
+	// All operations queued
+	// Processed: 3
+}

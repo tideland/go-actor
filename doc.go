@@ -97,6 +97,9 @@ Features:
 
 - Asynchronous Actions: DoAsync(), DoAsyncWithError() queue work and return immediately
 
+- Async-Await Actions: DoAsyncAwait(), DoAsyncAwaitWithError() queue work immediately
+  and return an awaiter function that blocks until completion
+
 - Queries: Query() for read-only access with type-safe return values
 
 - Updates: Update() for atomic read-modify-write operations

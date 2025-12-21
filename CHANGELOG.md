@@ -1,5 +1,11 @@
 # Changelog
 
+### v1.0.0 (2025-12-21)
+
+* Added `DoAsyncAwait()`, `DoAsyncAwaitWithError()`, and `DoAsyncAwaitWithErrorContext()`
+  methods for async queueing with deferred synchronous waiting
+* BREAKING: Version 1.0.0 marks the stabilization of the generic actor API
+
 ### v0.5.1 (2025-12-16)
 
 * Added example and documentation for using actors to protect struct state,
