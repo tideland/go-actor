@@ -105,11 +105,16 @@ func Example_configuration() {
 
 	type State struct{}
 	act, _ := actor.Go(State{}, cfg)
-	defer act.Stop()
 
 	fmt.Println("Actor configured and running")
+
+	// Stop actor and wait for finalizer
+	act.Stop()
+	<-act.Done()
+
 	// Output:
 	// Actor configured and running
+	// Actor stopped
 }
 
 // Example_withContext demonstrates using a context to control the actor's lifecycle.

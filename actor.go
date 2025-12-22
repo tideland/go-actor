@@ -145,14 +145,13 @@ func (a *Actor[S]) executeRequest(req *request[S]) error {
 		ctx, cancel := context.WithTimeout(req.ctx, timeout)
 		defer cancel()
 
-		done := make(chan struct{})
+		done := make(chan error, 1)
 		go func() {
-			actionErr = req.action(&a.state)
-			close(done)
+			done <- req.action(&a.state)
 		}()
 
 		select {
-		case <-done:
+		case actionErr = <-done:
 			// Action completed
 		case <-ctx.Done():
 			actionErr = &ActorError{
