@@ -1,24 +1,25 @@
 # Changelog
 
-### v1.0.0 (2025-12-21)
+### v1.0.0 (2025-12-22)
 
+* BREAKING: Version 1.0.0 marks the stabilization of the generic actor API
+* Added `DoSync()`, `DoSyncWithError()`, and `DoSyncWithErrorContext()`
+  methods for synchronous queueing with optional error handling
+* Added `DoAsync()`, `DoAsyncWithError()`, and `DoAsyncWithErrorContext()`
+  methods for asynchronous queueing with optional error handling
 * Added `DoAsyncAwait()`, `DoAsyncAwaitWithError()`, and `DoAsyncAwaitWithErrorContext()`
   methods for async queueing with deferred synchronous waiting
-* BREAKING: Version 1.0.0 marks the stabilization of the generic actor API
-
-### v0.5.1 (2025-12-16)
-
+* Added `Query()` and `Update()` methods for convenient state access
+* Changed API to encapsulate Actor state inside the Actor and access
+  only via its methods
 * Added example and documentation for using actors to protect struct state,
   making methods thread-safe.
-
-### v0.5.0 (2025-12-16)
-
 * Added comprehensive examples for documentation and tests
 * Added benchmarks for key functions
 * Added fuzz tests for actor actions
 * Added a concurrency test to ensure race-free execution
-* Updated `doc.go` and `README.md` for better readability and more examples
-* Updated `Makefile` with a `fuzz` target
+* Updated `doc.go` and `README.md`, and `HOWTO.md` for better readability and more examples
+* Addded a `Makefile`
 
 ### v0.4.0 (2025-05-23)
 

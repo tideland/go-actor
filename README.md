@@ -7,15 +7,23 @@
 ![Workflow](https://github.com/tideland/go-actor/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/tideland/go-actor)](https://goreportcard.com/report/tideland.dev/go/actor)
 
+## 📖 [Usage Guide: How to Use Tideland Go Actor](HOWTO.md)
+
+**For the recommended usage pattern** (wrapping actors in your own types with convenient methods), **see the [HOWTO.md](HOWTO.md) guide**.
+
+---
+
+## API Description
+
 **Tideland Go Actor** provides a robust implementation of the Actor Model in Go using generics to truly encapsulate state. Following the Erlang/OTP process model, actors OWN their state and only allow access through serialized message passing (closures). This makes race conditions **impossible by design** since there's no way to bypass the actor's serialization.
 
-## Why This Design?
+### Why This Design?
 
 Traditional actor patterns in Go often embed an actor within a struct to protect fields. However, this relies on developer discipline - it's easy to accidentally write direct getters/setters that bypass the actor, creating race conditions.
 
 **This implementation solves that problem**: The actor owns the state using Go generics. The compiler prevents direct access, making concurrent safety foolproof.
 
-## Features
+### Features
 
 - **True Encapsulation**: State is owned by the actor, not accessible from outside
 - **Type Safety**: Uses Go generics for type-safe state access without reflection
@@ -28,13 +36,13 @@ Traditional actor patterns in Go often embed an actor within a struct to protect
 - **No Panic Recovery**: Panics crash the actor (as they should in Go) rather than continuing with corrupt state
 - **Zero Dependencies**: Pure Go implementation
 
-## Installation
+### Installation
 
 ```bash
 go get tideland.dev/go/actor
 ```
 
-## Quick Start
+### Quick Start
 
 ```go
 package main
@@ -74,9 +82,9 @@ func main() {
 }
 ```
 
-## Examples
+### Examples
 
-### Basic Counter
+#### Basic Counter
 
 The actor owns the state - there's NO way to access it except through the actor:
 
@@ -103,7 +111,7 @@ value, _ := counter.Query(func(s *Counter) int {
 })
 ```
 
-### Bank Account with Validation
+#### Bank Account with Validation
 
 ```go
 type Account struct {
@@ -132,7 +140,7 @@ withdrawn, err := account.Update(func(s *Account) (any, error) {
 fmt.Printf("Withdrawn: %v, Error: %v\n", withdrawn, err)
 ```
 
-### Configuration with Fluent Builder
+#### Configuration with Fluent Builder
 
 ```go
 cfg := actor.NewConfig(ctx).
@@ -152,7 +160,7 @@ if err := cfg.Validate(); err != nil {
 actor, err := actor.Go(MyState{}, cfg)
 ```
 
-### Concurrent Safety
+#### Concurrent Safety
 
 Guaranteed correctness even with heavy concurrency:
 
@@ -184,7 +192,7 @@ value, _ := counter.Query(func(s *Counter) int {
 fmt.Printf("Value: %d\n", value) // Output: Value: 1000
 ```
 
-### Repeating Actions
+#### Repeating Actions
 
 ```go
 type Stats struct {
@@ -204,7 +212,7 @@ stop := stats.Repeat(1*time.Second, func(s *Stats) {
 defer stop()
 ```
 
-### Synchronous vs Asynchronous
+#### Synchronous vs Asynchronous
 
 ```go
 // Synchronous - blocks until complete
@@ -226,13 +234,13 @@ err = actor.DoWithError(func(s *State) error {
 })
 ```
 
-## API Reference
+### API Reference
 
-### Creating Actors
+#### Creating Actors
 
 - `actor.Go[S](initialState S, cfg *Config) (*Actor[S], error)` - Create and start an actor
 
-### Configuration
+#### Configuration
 
 - `actor.NewConfig(ctx context.Context) *Config` - Create new configuration
 - `actor.DefaultConfig() *Config` - Create configuration with defaults
@@ -242,7 +250,7 @@ err = actor.DoWithError(func(s *State) error {
 - `.SetFinalizer(func(error) error)` - Set cleanup function
 - `.Validate() error` - Check for configuration errors
 
-### Actor Methods
+#### Actor Methods
 
 **State Modification:**
 - `.Do(func(*S))` - Execute action synchronously
@@ -270,10 +278,10 @@ err = actor.DoWithError(func(s *State) error {
 **Monitoring:**
 - `.QueueStatus() QueueStatus` - Get queue depth and capacity
 
-## Contributing
+### Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request.
 
-## License
+### License
 
 Tideland Go Actor is licensed under the [New BSD License](LICENSE).
