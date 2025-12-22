@@ -103,7 +103,7 @@ func Example_configuration() {
 		log.Fatalf("Invalid config: %v", err)
 	}
 
-	type State struct{ count int }
+	type State struct{}
 	act, _ := actor.Go(State{}, cfg)
 	defer act.Stop()
 
@@ -197,13 +197,13 @@ func Example_syncAndAsync() {
 	defer counter.Stop()
 
 	// Synchronous action (blocks until complete)
-	counter.Do(func(s *Counter) {
+	_ = counter.Do(func(s *Counter) {
 		s.value++
 		fmt.Println("Sync: incremented")
 	})
 
 	// Asynchronous action (returns immediately)
-	counter.DoAsync(func(s *Counter) {
+	_ = counter.DoAsync(func(s *Counter) {
 		s.value++
 		fmt.Println("Async: incremented")
 	})
@@ -235,9 +235,11 @@ func Example_concurrentSafety() {
 
 	// Increment the counter ten times concurrently
 	for range 10 {
-		go counter.DoAsync(func(s *Counter) {
-			s.value++
-		})
+		go func() {
+			_ = counter.DoAsync(func(s *Counter) {
+				s.value++
+			})
+		}()
 	}
 
 	// Wait for all increments to complete
@@ -315,7 +317,7 @@ func Example_asyncAwait() {
 
 	// Queue multiple operations and collect awaiters
 	var awaiters []func() error
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		await := proc.DoAsyncAwait(func(s *Processor) {
 			s.processed++
 		})

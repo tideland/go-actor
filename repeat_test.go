@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"tideland.dev/go/actor"
 	"tideland.dev/go/asserts/verify"
+
+	"tideland.dev/go/actor"
 )
 
 // TestRepeatStopActor verifies Repeat working and being

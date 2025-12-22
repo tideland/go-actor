@@ -120,7 +120,7 @@ func TestActorDoAsync(t *testing.T) {
 	defer act.Stop()
 
 	// Queue several async actions
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		err := act.DoAsync(func(s *Counter) {
 			s.value++
 		})
@@ -226,10 +226,10 @@ func TestActorConcurrency(t *testing.T) {
 
 	// Start 100 goroutines, each incrementing 10 times
 	done := make(chan struct{})
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		go func() {
-			for j := 0; j < 10; j++ {
-				act.DoAsync(func(s *Counter) {
+			for range 10 {
+				_ = act.DoAsync(func(s *Counter) {
 					s.value++
 				})
 			}
@@ -396,7 +396,7 @@ func TestActorDoAsyncAwait(t *testing.T) {
 
 	// Queue multiple actions and collect awaiters
 	awaiters := make([]func() error, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		awaiters[i] = act.DoAsyncAwait(func(s *Counter) {
 			s.value++
 		})
@@ -531,4 +531,3 @@ func TestActorDoAsyncAwaitMultipleCalls(t *testing.T) {
 	verify.NoError(t, err)
 	verify.Equal(t, value.(int), 42)
 }
-

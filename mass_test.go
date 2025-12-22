@@ -57,7 +57,7 @@ func TestPerformance(t *testing.T) {
 
 	now := time.Now()
 	for range 10000 {
-		act.DoAsync(func(s *State) {})
+		_ = act.DoAsync(func(s *State) {})
 	}
 	duration := time.Since(now)
 	verify.True(t, duration < 100*time.Millisecond, "Queueing 10000 operations took too long")
@@ -99,7 +99,7 @@ func NewPingPongActor(pps []*PingPongActor) *PingPongActor {
 
 // Ping increments pings and triggers a random Pong.
 func (pp *PingPongActor) Ping() {
-	pp.act.DoAsync(func(s *PingPongState) {
+	_ = pp.act.DoAsync(func(s *PingPongState) {
 		s.pings++
 		n := rand.Intn(len(pp.pps))
 		pp.pps[n].Pong()
@@ -108,7 +108,7 @@ func (pp *PingPongActor) Ping() {
 
 // Pong increments pongs and triggers a random Ping.
 func (pp *PingPongActor) Pong() {
-	pp.act.DoAsync(func(s *PingPongState) {
+	_ = pp.act.DoAsync(func(s *PingPongState) {
 		s.pongs++
 		n := rand.Intn(len(pp.pps))
 		pp.pps[n].Ping()
@@ -118,7 +118,7 @@ func (pp *PingPongActor) Pong() {
 // PingPongs returns the current ping and pong counts.
 func (pp *PingPongActor) PingPongs() (int, int) {
 	var pings, pongs int
-	pp.act.Do(func(s *PingPongState) {
+	_ = pp.act.Do(func(s *PingPongState) {
 		pings = s.pings
 		pongs = s.pongs
 	})
