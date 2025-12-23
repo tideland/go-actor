@@ -5,6 +5,7 @@
 [![Go Module](https://img.shields.io/github/go-mod/go-version/tideland/go-actor)](https://github.com/tideland/go-actor/blob/master/go.mod)
 [![GoDoc](https://godoc.org/tideland.dev/go/actor?status.svg)](https://pkg.go.dev/mod/tideland.dev/go/actor?tab=packages)
 ![Workflow](https://github.com/tideland/go-actor/actions/workflows/build.yml/badge.svg)
+[![codecov](https://codecov.io/gh/tideland/go-actor/branch/main/graph/badge.svg)](https://codecov.io/gh/tideland/go-actor)
 [![Go Report Card](https://goreportcard.com/badge/github.com/tideland/go-actor)](https://goreportcard.com/report/tideland.dev/go/actor)
 
 ## Overview

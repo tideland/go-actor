@@ -23,10 +23,10 @@ COLOR_BLUE := \033[34m
 .DEFAULT_GOAL := all
 
 # Phony targets
-.PHONY: all help tidy lint build test bench fuzz coverage clean install-tools check-tools
+.PHONY: all help fmt tidy lint build test bench fuzz coverage clean install-tools check-tools
 
-## all: Run complete build process (tidy, lint, build, test)
-all: tidy lint build test
+## all: Run complete build process (fmt, tidy, lint, build, test)
+all: fmt tidy lint build test
 	@echo "$(COLOR_GREEN)$(COLOR_BOLD)✓ All tasks completed successfully$(COLOR_RESET)"
 
 ## help: Display this help message
@@ -37,6 +37,12 @@ help:
 	@echo ""
 	@echo "$(COLOR_BLUE)Usage: make [target]$(COLOR_RESET)"
 	@echo ""
+
+## fmt: Format Go source files
+fmt:
+	@echo "$(COLOR_YELLOW)→ Formatting Go source files...$(COLOR_RESET)"
+	@gofmt -s -w .
+	@echo "$(COLOR_GREEN)✓ Code formatting completed$(COLOR_RESET)"
 
 ## tidy: Update go.mod and go.sum files
 tidy:
@@ -112,5 +118,5 @@ check-tools:
 	@echo "$(COLOR_GREEN)✓ Tool version check completed$(COLOR_RESET)"
 
 ## ci: Run CI pipeline (used by GitHub Actions)
-ci: tidy lint build test
+ci: fmt tidy lint build test
 	@echo "$(COLOR_GREEN)$(COLOR_BOLD)✓ CI pipeline completed$(COLOR_RESET)"
