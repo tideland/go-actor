@@ -1,0 +1,25 @@
+name: Coverage
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - run: go test ./... -coverprofile=coverage.out
+
+      - run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
+          echo "{ \"schemaVersion\": 1, \"label\": \"coverage\", \"message\": \"${COVERAGE}%\", \"color\": \"green\" }" > coverage.json
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update coverage badge"
