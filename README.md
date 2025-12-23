@@ -89,8 +89,10 @@ import (
 
 // Internal state owned by the actor
 type accountState struct {
-    balance int
-    holder  string
+    balance      int
+    holder       string
+    currency     string
+    transactions int
 }
 
 // Account wraps the actor with convenient methods
@@ -98,9 +100,14 @@ type Account struct {
     actor *actor.Actor[accountState]
 }
 
-func NewAccount(ctx context.Context, holder string, initial int) (*Account, error) {
+func NewAccount(ctx context.Context, holder, currency string, initial int) (*Account, error) {
     cfg := actor.NewConfig(ctx)
-    act, err := actor.Go(accountState{balance: initial, holder: holder}, cfg)
+    act, err := actor.Go(accountState{
+        balance:      initial,
+        holder:       holder,
+        currency:     currency,
+        transactions: 0,
+    }, cfg)
     if err != nil {
         return nil, err
     }
@@ -110,6 +117,7 @@ func NewAccount(ctx context.Context, holder string, initial int) (*Account, erro
 func (a *Account) Deposit(amount int) error {
     return a.actor.Do(func(s *accountState) {
         s.balance += amount
+        s.transactions++
     })
 }
 
@@ -119,6 +127,7 @@ func (a *Account) Withdraw(amount int) error {
             return fmt.Errorf("insufficient funds")
         }
         s.balance -= amount
+        s.transactions++
         return nil
     })
 }
@@ -133,19 +142,55 @@ func (a *Account) Balance() (int, error) {
     return result.(int), nil
 }
 
+func (a *Account) Holder() (string, error) {
+    result, err := a.actor.Query(func(s *accountState) any {
+        return s.holder
+    })
+    if err != nil {
+        return "", err
+    }
+    return result.(string), nil
+}
+
+func (a *Account) Currency() (string, error) {
+    result, err := a.actor.Query(func(s *accountState) any {
+        return s.currency
+    })
+    if err != nil {
+        return "", err
+    }
+    return result.(string), nil
+}
+
+func (a *Account) TransactionCount() (int, error) {
+    result, err := a.actor.Query(func(s *accountState) any {
+        return s.transactions
+    })
+    if err != nil {
+        return 0, err
+    }
+    return result.(int), nil
+}
+
 func (a *Account) Close() {
     a.actor.Stop()
 }
 
 func main() {
-    account, _ := NewAccount(context.Background(), "Alice", 1000)
+    account, _ := NewAccount(context.Background(), "Alice", "USD", 1000)
     defer account.Close()
 
     account.Deposit(500)
     account.Withdraw(200)
 
     balance, _ := account.Balance()
-    fmt.Printf("Balance: %d\n", balance) // Output: Balance: 1300
+    holder, _ := account.Holder()
+    currency, _ := account.Currency()
+    txCount, _ := account.TransactionCount()
+    
+    fmt.Printf("%s's %s account: %d (transactions: %d)\n", 
+        holder, currency, balance, txCount)
+    // Output: Alice's USD account: 1300 (transactions: 2)
 }
 ```
 

@@ -40,8 +40,10 @@ Here's how to build a concurrent-safe bank account:
 
 	// accountState is the internal state owned by the actor
 	type accountState struct {
-		balance int
-		holder  string
+		balance      int
+		holder       string
+		currency     string
+		transactions int
 	}
 
 	// Account provides thread-safe banking operations
@@ -50,15 +52,17 @@ Here's how to build a concurrent-safe bank account:
 	}
 
 	// NewAccount creates a new bank account
-	func NewAccount(ctx context.Context, holder string, initialBalance int) (*Account, error) {
+	func NewAccount(ctx context.Context, holder, currency string, initialBalance int) (*Account, error) {
 		if initialBalance < 0 {
 			return nil, fmt.Errorf("initial balance cannot be negative")
 		}
 
 		cfg := actor.NewConfig(ctx)
 		act, err := actor.Go(accountState{
-			balance: initialBalance,
-			holder:  holder,
+			balance:      initialBalance,
+			holder:       holder,
+			currency:     currency,
+			transactions: 0,
 		}, cfg)
 		if err != nil {
 			return nil, err
@@ -74,6 +78,7 @@ Here's how to build a concurrent-safe bank account:
 		}
 		return a.actor.Do(func(s *accountState) {
 			s.balance += amount
+			s.transactions++
 		})
 	}
 
@@ -87,6 +92,7 @@ Here's how to build a concurrent-safe bank account:
 				return fmt.Errorf("insufficient funds")
 			}
 			s.balance -= amount
+			s.transactions++
 			return nil
 		})
 	}
@@ -102,6 +108,39 @@ Here's how to build a concurrent-safe bank account:
 		return result.(int), nil
 	}
 
+	// Holder returns the account holder name
+	func (a *Account) Holder() (string, error) {
+		result, err := a.actor.Query(func(s *accountState) any {
+			return s.holder
+		})
+		if err != nil {
+			return "", err
+		}
+		return result.(string), nil
+	}
+
+	// Currency returns the account currency
+	func (a *Account) Currency() (string, error) {
+		result, err := a.actor.Query(func(s *accountState) any {
+			return s.currency
+		})
+		if err != nil {
+			return "", err
+		}
+		return result.(string), nil
+	}
+
+	// TransactionCount returns the number of transactions
+	func (a *Account) TransactionCount() (int, error) {
+		result, err := a.actor.Query(func(s *accountState) any {
+			return s.transactions
+		})
+		if err != nil {
+			return 0, err
+		}
+		return result.(int), nil
+	}
+
 	// Close stops the actor
 	func (a *Account) Close() {
 		a.actor.Stop()
@@ -109,14 +148,19 @@ Here's how to build a concurrent-safe bank account:
 
 Usage:
 
-	alice, _ := NewAccount(ctx, "Alice", 1000)
+	alice, _ := NewAccount(ctx, "Alice", "USD", 1000)
 	defer alice.Close()
 
 	alice.Deposit(200)
 	alice.Withdraw(100)
 
 	balance, _ := alice.Balance()
-	fmt.Printf("Balance: %d\n", balance)
+	holder, _ := alice.Holder()
+	currency, _ := alice.Currency()
+	txCount, _ := alice.TransactionCount()
+
+	fmt.Printf("%s's %s account: %d (transactions: %d)\n",
+		holder, currency, balance, txCount)
 
 # Asynchronous Operations
 
@@ -129,6 +173,7 @@ For operations that don't need immediate results:
 		}
 		return a.actor.DoAsync(func(s *accountState) {
 			s.balance += amount
+			s.transactions++
 		})
 	}
 
@@ -142,6 +187,7 @@ For operations that don't need immediate results:
 				return fmt.Errorf("insufficient funds")
 			}
 			s.balance -= amount
+			s.transactions++
 			return nil
 		})
 	}
@@ -286,7 +332,7 @@ Customize actor behavior with the fluent configuration builder:
 Testing is straightforward since the actor encapsulates all concurrency:
 
 	func TestAccount(t *testing.T) {
-		account, err := NewAccount(context.Background(), "Alice", 1000)
+		account, err := NewAccount(context.Background(), "Alice", "USD", 1000)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -300,6 +346,17 @@ Testing is straightforward since the actor encapsulates all concurrency:
 		balance, _ := account.Balance()
 		if balance != 1500 {
 			t.Errorf("expected 1500, got %d", balance)
+		}
+
+		// Verify holder and currency
+		holder, _ := account.Holder()
+		if holder != "Alice" {
+			t.Errorf("expected Alice, got %s", holder)
+		}
+
+		currency, _ := account.Currency()
+		if currency != "USD" {
+			t.Errorf("expected USD, got %s", currency)
 		}
 
 		// Test concurrent access
@@ -316,6 +373,12 @@ Testing is straightforward since the actor encapsulates all concurrency:
 		balance, _ = account.Balance()
 		if balance != 2500 { // 1500 + (100 * 10)
 			t.Errorf("expected 2500, got %d", balance)
+		}
+
+		// Check transaction count
+		txCount, _ := account.TransactionCount()
+		if txCount != 101 { // 1 initial + 100 concurrent
+			t.Errorf("expected 101 transactions, got %d", txCount)
 		}
 	}
 

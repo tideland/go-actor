@@ -36,12 +36,19 @@ Creates and starts a new actor that owns the given initial state.
 
 ```go
 type Account struct {
-    balance int
-    holder  string
+    balance      int
+    holder       string
+    currency     string
+    transactions int
 }
 
 cfg := actor.NewConfig(context.Background())
-account, err := actor.Go(Account{balance: 100, holder: "Alice"}, cfg)
+account, err := actor.Go(Account{
+    balance:      100,
+    holder:       "Alice",
+    currency:     "USD",
+    transactions: 0,
+}, cfg)
 if err != nil {
     log.Fatal(err)
 }
@@ -205,6 +212,7 @@ Executes an action synchronously. Blocks until the action completes.
 ```go
 err := account.Do(func(s *Account) {
     s.balance += 100
+    s.transactions++
 })
 ```
 
@@ -223,6 +231,7 @@ Queues an action asynchronously. Returns immediately after queueing.
 ```go
 err := account.DoAsync(func(s *Account) {
     s.balance += 100
+    s.transactions++
 })
 ```
 
@@ -244,6 +253,7 @@ err := account.DoWithError(func(s *Account) error {
         return fmt.Errorf("insufficient funds")
     }
     s.balance -= 100
+    s.transactions++
     return nil
 })
 ```
@@ -284,6 +294,7 @@ Queues an action asynchronously and returns an awaiter function. The awaiter blo
 ```go
 await := account.DoAsyncAwait(func(s *Account) {
     s.balance += 100
+    s.transactions++
 })
 
 // Do other work...
@@ -310,6 +321,7 @@ await := account.DoAsyncAwaitWithError(func(s *Account) error {
         return fmt.Errorf("insufficient funds")
     }
     s.balance -= 100
+    s.transactions++
     return nil
 })
 
@@ -709,6 +721,7 @@ for i := 0; i < 100; i++ {
         for j := 0; j < 10; j++ {
             account.DoAsync(func(s *Account) {
                 s.balance += 10
+                s.transactions++
             })
         }
     }()
