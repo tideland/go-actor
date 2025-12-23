@@ -7,281 +7,265 @@
 ![Workflow](https://github.com/tideland/go-actor/actions/workflows/build.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/tideland/go-actor)](https://goreportcard.com/report/tideland.dev/go/actor)
 
-## 📖 [Usage Guide: How to Use Tideland Go Actor](HOWTO.md)
+## Overview
 
-**For the recommended usage pattern** (wrapping actors in your own types with convenient methods), **see the [HOWTO.md](HOWTO.md) guide**.
+**Tideland Go Actor** is a robust implementation of Tony Hoare's Actor Model in Go. It provides true state encapsulation through Go generics, making concurrent programming safe and intuitive.
 
----
+The Actor Model is based on the concept that actors maintain encapsulated state that can only be accessed through serialized messages. In this implementation, messages are function types (closures) that receive a pointer to the state. This design makes race conditions impossible by construction - the compiler prevents direct state access, and all operations are automatically serialized.
 
-## API Description
+## Design Philosophy
 
-**Tideland Go Actor** provides a robust implementation of the Actor Model in Go using generics to truly encapsulate state. Following the Erlang/OTP process model, actors OWN their state and only allow access through serialized message passing (closures). This makes race conditions **impossible by design** since there's no way to bypass the actor's serialization.
+### Based on Tony Hoare's Actor Model
 
-### Why This Design?
+This implementation follows the core principles of the Actor Model:
+
+- **Encapsulated State**: Each actor owns its state completely
+- **Message Passing**: State is accessed only through serialized messages (function closures)
+- **Sequential Processing**: Messages are processed one at a time in order
+- **Isolation**: No shared memory between actors
+
+### True State Ownership via Go Generics
 
 Traditional actor patterns in Go often embed an actor within a struct to protect fields. However, this relies on developer discipline - it's easy to accidentally write direct getters/setters that bypass the actor, creating race conditions.
 
-**This implementation solves that problem**: The actor owns the state using Go generics. The compiler prevents direct access, making concurrent safety foolproof.
+**This implementation solves that problem**: The actor owns the state using Go generics `Actor[S]`. The state `S` is only accessible through closures passed to the actor's methods. The compiler prevents direct access, making concurrent safety foolproof.
 
-### Features
+```go
+type Account struct {
+    balance int  // This state is OWNED by the actor
+}
 
-- **True Encapsulation**: State is owned by the actor, not accessible from outside
-- **Type Safety**: Uses Go generics for type-safe state access without reflection
-- **Impossible Race Conditions**: Compiler-enforced serialization of all state access
-- **Fluent Configuration**: Worker-style builder pattern with error accumulation
-- **Synchronous & Asynchronous Actions**: `Do()` blocks, `DoAsync()` queues immediately
-- **Query & Update**: Convenient methods for read-only and read-modify-write operations
-- **Context Integration**: First-class support for context-based cancellation
-- **Repeating Actions**: Built-in support for periodic execution
-- **No Panic Recovery**: Panics crash the actor (as they should in Go) rather than continuing with corrupt state
+account, _ := actor.Go(Account{balance: 100}, cfg)
+
+// ✅ The ONLY way to access state - through messages (closures)
+account.Do(func(s *Account) {
+    s.balance += 50
+})
+
+// ❌ IMPOSSIBLE - compiler error! State is owned by actor
+// account.balance += 50
+```
+
+### Key Design Principles
+
+1. **State Encapsulation**: The actor owns the state of generic type S. State cannot be accessed directly.
+
+2. **Sequential Execution**: All actions execute sequentially in a dedicated goroutine, guaranteeing no race conditions.
+
+3. **Type Safety**: Go generics ensure type-safe state access without reflection.
+
+4. **Configuration via Builder**: Fluent configuration with error accumulation.
+
+5. **No Panic Recovery**: Panics crash the actor as they should in Go, rather than continuing with corrupt state.
+
+## Key Features
+
+- **True Encapsulation**: State owned by the actor, compiler-enforced
+- **Type Safety**: Go generics for type-safe state access
+- **Impossible Race Conditions**: Compiler-enforced serialization
+- **Fluent Configuration**: Builder pattern with error accumulation
+- **Synchronous & Asynchronous Actions**: `Do()` blocks, `DoAsync()` queues
+- **Query & Update**: Read-only and atomic read-modify-write operations
+- **Context Integration**: First-class context support for cancellation
+- **Repeating Actions**: Built-in periodic execution
 - **Zero Dependencies**: Pure Go implementation
 
-### Installation
+## Installation
 
 ```bash
 go get tideland.dev/go/actor
 ```
 
-### Quick Start
+## Quick Start
 
 ```go
 package main
 
 import (
-	"context"
-	"fmt"
-
-	"tideland.dev/go/actor"
+    "context"
+    "fmt"
+    "tideland.dev/go/actor"
 )
 
-func main() {
-	// Define your state type
-	type Counter struct {
-		value int
-	}
-
-	// Create an actor that owns the state
-	cfg := actor.NewConfig(context.Background())
-	counter, err := actor.Go(Counter{value: 0}, cfg)
-	if err != nil {
-		panic(err)
-	}
-	defer counter.Stop()
-
-	// Modify state (synchronous)
-	counter.Do(func(s *Counter) {
-		s.value++
-	})
-
-	// Read state
-	value, _ := counter.Query(func(s *Counter) int {
-		return s.value
-	})
-
-	fmt.Printf("Counter: %d\n", value)
-}
-```
-
-### Examples
-
-#### Basic Counter
-
-The actor owns the state - there's NO way to access it except through the actor:
-
-```go
-type Counter struct {
-	value int
+// Internal state owned by the actor
+type accountState struct {
+    balance int
+    holder  string
 }
 
-cfg := actor.NewConfig(context.Background())
-counter, _ := actor.Go(Counter{value: 0}, cfg)
-defer counter.Stop()
-
-// ✅ The ONLY way to modify state
-counter.Do(func(s *Counter) {
-	s.value++
-})
-
-// ❌ IMPOSSIBLE - compiler error!
-// counter.value++
-
-// ✅ The ONLY way to read state
-value, _ := counter.Query(func(s *Counter) int {
-	return s.value
-})
-```
-
-#### Bank Account with Validation
-
-```go
+// Account wraps the actor with convenient methods
 type Account struct {
-	balance int
-	name    string
+    actor *actor.Actor[accountState]
 }
 
-cfg := actor.NewConfig(context.Background())
-account, _ := actor.Go(Account{balance: 100, name: "Savings"}, cfg)
-defer account.Stop()
-
-// Deposit
-account.Do(func(s *Account) {
-	s.balance += 50
-})
-
-// Withdraw with validation using Update
-withdrawn, err := account.Update(func(s *Account) (any, error) {
-	if s.balance >= 30 {
-		s.balance -= 30
-		return true, nil
-	}
-	return false, fmt.Errorf("insufficient funds")
-})
-
-fmt.Printf("Withdrawn: %v, Error: %v\n", withdrawn, err)
-```
-
-#### Configuration with Fluent Builder
-
-```go
-cfg := actor.NewConfig(ctx).
-	SetQueueCapacity(512).                    // Request queue size
-	SetActionTimeout(5 * time.Second).        // Max action duration
-	SetShutdownTimeout(10 * time.Second).     // Max shutdown wait
-	SetFinalizer(func(err error) error {      // Cleanup on stop
-		log.Printf("Actor stopped: %v", err)
-		return nil
-	})
-
-// Errors are accumulated and can be checked
-if err := cfg.Validate(); err != nil {
-	log.Fatal(err)
+func NewAccount(ctx context.Context, holder string, initial int) (*Account, error) {
+    cfg := actor.NewConfig(ctx)
+    act, err := actor.Go(accountState{balance: initial, holder: holder}, cfg)
+    if err != nil {
+        return nil, err
+    }
+    return &Account{actor: act}, nil
 }
 
-actor, err := actor.Go(MyState{}, cfg)
-```
-
-#### Concurrent Safety
-
-Guaranteed correctness even with heavy concurrency:
-
-```go
-type Counter struct {
-	value int
+func (a *Account) Deposit(amount int) error {
+    return a.actor.Do(func(s *accountState) {
+        s.balance += amount
+    })
 }
 
-counter, _ := actor.Go(Counter{value: 0}, cfg)
-defer counter.Stop()
-
-// Launch 100 goroutines, each incrementing 10 times
-for i := 0; i < 100; i++ {
-	go func() {
-		for j := 0; j < 10; j++ {
-			counter.DoAsync(func(s *Counter) {
-				s.value++
-			})
-		}
-	}()
+func (a *Account) Withdraw(amount int) error {
+    return a.actor.DoWithError(func(s *accountState) error {
+        if s.balance < amount {
+            return fmt.Errorf("insufficient funds")
+        }
+        s.balance -= amount
+        return nil
+    })
 }
 
-time.Sleep(100 * time.Millisecond)
-
-// Always exactly 1000 - no race conditions possible!
-value, _ := counter.Query(func(s *Counter) int {
-	return s.value
-})
-fmt.Printf("Value: %d\n", value) // Output: Value: 1000
-```
-
-#### Repeating Actions
-
-```go
-type Stats struct {
-	healthChecks int
+func (a *Account) Balance() (int, error) {
+    result, err := a.actor.Query(func(s *accountState) any {
+        return s.balance
+    })
+    if err != nil {
+        return 0, err
+    }
+    return result.(int), nil
 }
 
-stats, _ := actor.Go(Stats{}, cfg)
-defer stats.Stop()
+func (a *Account) Close() {
+    a.actor.Stop()
+}
 
-// Run health check every second
-stop := stats.Repeat(1*time.Second, func(s *Stats) {
-	s.healthChecks++
-	log.Printf("Health check %d", s.healthChecks)
-})
+func main() {
+    account, _ := NewAccount(context.Background(), "Alice", 1000)
+    defer account.Close()
 
-// Stop the repeat when done
-defer stop()
+    account.Deposit(500)
+    account.Withdraw(200)
+
+    balance, _ := account.Balance()
+    fmt.Printf("Balance: %d\n", balance) // Output: Balance: 1300
+}
 ```
 
-#### Synchronous vs Asynchronous
+## Documentation
 
-```go
-// Synchronous - blocks until complete
-err := actor.Do(func(s *State) {
-	s.value = 42
-})
+- **Usage Guide**: See [pkg.go.dev](https://pkg.go.dev/tideland.dev/go/actor) for comprehensive usage patterns, examples, and best practices
+- **API Reference**: See [API.md](API.md) for complete API documentation
 
-// Asynchronous - queues and returns immediately
-err = actor.DoAsync(func(s *State) {
-	s.value = 42
-})
+## Architecture
 
-// With error handling
-err = actor.DoWithError(func(s *State) error {
-	if s.value < 0 {
-		return fmt.Errorf("invalid value")
-	}
-	return nil
-})
+### Package Structure
+
+```
+actor/
+├── actor.go        # Core Actor[S] type and methods
+├── config.go       # Configuration builder
+├── errors.go       # Error types and codes
+├── result.go       # Result[T] type
+├── doc.go          # Package documentation
+└── *_test.go       # Tests and examples
 ```
 
-### API Reference
+### Internal Design
 
-#### Creating Actors
+The actor runs a dedicated goroutine that processes messages from a buffered channel. All state access goes through this single goroutine, ensuring serialization:
 
-- `actor.Go[S](initialState S, cfg *Config) (*Actor[S], error)` - Create and start an actor
+```mermaid
+graph TD
+    A[User Code<br/>many threads] -->|Do/DoAsync/Query/Update<br/>sends closures as messages| B[Message Queue<br/>channel]
+    B -->|Sequential processing| C[Actor Goroutine<br/>Executes closures with state S]
+```
 
-#### Configuration
+### Message Types
 
-- `actor.NewConfig(ctx context.Context) *Config` - Create new configuration
-- `actor.DefaultConfig() *Config` - Create configuration with defaults
-- `.SetQueueCapacity(int)` - Set request queue size (default: 256)
-- `.SetActionTimeout(duration)` - Set action timeout (default: none)
-- `.SetShutdownTimeout(duration)` - Set shutdown timeout (default: 5s)
-- `.SetFinalizer(func(error) error)` - Set cleanup function
-- `.Validate() error` - Check for configuration errors
+All operations are implemented as messages (closures):
 
-#### Actor Methods
+- **Do/DoAsync**: `func(*S)` - State modification
+- **DoWithError/DoAsyncWithError**: `func(*S) error` - With error handling
+- **Query**: `func(*S) any` - Read-only access
+- **Update**: `func(*S) (any, error)` - Atomic read-modify-write
+- **Repeat**: Periodic `func(*S)` execution
 
-**State Modification:**
-- `.Do(func(*S))` - Execute action synchronously
-- `.DoAsync(func(*S))` - Queue action asynchronously
-- `.DoWithError(func(*S) error)` - Execute with error handling
-- `.DoAsyncWithError(func(*S) error)` - Queue with error handling
+### Lifecycle
 
-**State Reading:**
-- `.Query(func(*S) any) (any, error)` - Read state synchronously
+The actor follows a clear lifecycle from creation to shutdown:
 
-**Atomic Operations:**
-- `.Update(func(*S) (any, error)) (any, error)` - Read-modify-write atomically
+```mermaid
+stateDiagram-v2
+    [*] --> Created: actor.Go()
+    Created --> Running: Start goroutine
+    Running --> Draining: Stop() called
+    Draining --> Finalizer: Queue empty
+    Finalizer --> [*]: Cleanup complete
+```
 
-**Lifecycle:**
-- `.Stop()` - Gracefully stop the actor
-- `.Done() <-chan struct{}` - Channel closed when actor stops
-- `.IsRunning() bool` - Check if actor is running
-- `.IsDone() bool` - Check if actor has stopped
-- `.Err() error` - Get error that stopped the actor
+1. **Creation**: `actor.Go(initialState, config)` starts the actor goroutine
+2. **Running**: Actor processes messages from the queue sequentially
+3. **Draining**: `.Stop()` prevents new messages and processes remaining queue
+4. **Finalizer**: Cleanup callback (if configured) runs after queue is empty
+5. **Complete**: Actor goroutine exits
 
-**Repeating:**
-- `.Repeat(interval, func(*S)) func()` - Schedule periodic execution
-- `.RepeatWithContext(ctx, interval, func(*S)) func()` - With cancellation
+## Contributing
 
-**Monitoring:**
-- `.QueueStatus() QueueStatus` - Get queue depth and capacity
+Contributions are welcome! Here's how to get started:
 
-### Contributing
+### Building and Testing
 
-Contributions are welcome! Please open an issue or submit a pull request.
+```bash
+# Clone the repository
+git clone https://github.com/tideland/go-actor.git
+cd go-actor
 
-### License
+# Run tests
+go test -v ./...
+
+# Run tests with race detector
+go test -race -v ./...
+
+# Run benchmarks
+go test -bench=. -benchmem ./...
+```
+
+### Code Organization
+
+- **actor.go**: Core actor implementation - keep focused on message processing
+- **config.go**: Configuration builder - use worker pattern with error accumulation
+- **errors.go**: Error types - maintain error codes and descriptive messages
+- **result.go**: Generic result container - keep simple and composable
+- **doc.go**: Package documentation - focus on usage patterns and examples
+- **tests**: Provide examples and verify thread safety with `-race`
+
+### Design Principles to Maintain
+
+1. **State Ownership**: Never allow direct state access - only through closures
+2. **Type Safety**: Use generics to avoid reflection where possible
+3. **No Magic**: Don't recover from panics - let them crash the actor
+4. **Context First**: Respect context cancellation throughout
+5. **Builder Pattern**: Configuration uses fluent builder with error accumulation
+6. **Zero Dependencies**: Keep the implementation pure Go
+
+### Pull Request Guidelines
+
+- Add tests for new functionality
+- Ensure tests pass with `-race` flag
+- Update documentation (doc.go and API.md)
+- Follow existing code style
+- Keep commits focused and well-described
+
+### Questions or Issues?
+
+Open an issue on [GitHub](https://github.com/tideland/go-actor/issues) for:
+- Bug reports
+- Feature requests
+- Usage questions
+- Documentation improvements
+
+## License
 
 Tideland Go Actor is licensed under the [New BSD License](LICENSE).
+
+---
+
+**Copyright (C) 2019-2025 Frank Mueller / Tideland / Germany**

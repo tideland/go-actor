@@ -6,152 +6,323 @@
 // by the new BSD license.
 
 /*
-Package actor provides a robust implementation of the Actor Model in Go using generics
-to encapsulate state. It simplifies concurrent programming by ensuring all access to
-shared state is serialized, eliminating the need for manual locking and preventing
-race conditions by design.
+Package actor provides a robust implementation of Tony Hoare's Actor Model in Go using generics
+to encapsulate state. Actors maintain encapsulated state that can only be accessed through
+serialized messages. In this implementation, messages are function types (closures) that receive
+a pointer to the state.
 
-Following the Erlang/OTP process model, actors truly encapsulate state - the state is
-owned by the actor and can only be accessed through message passing (closures). This
-makes race conditions impossible since there's no way to bypass the actor's serialization.
+This approach eliminates race conditions by design - since the state is owned by the actor and
+accessed only through serialized message passing, concurrent access becomes impossible.
 
-Key Design Principles:
+# The Recommended Pattern
 
-- State Encapsulation: The actor OWNS the state of generic type S. State cannot be
-accessed directly, only through closures that receive *S.
+The recommended approach is to create a wrapper struct that contains an Actor and exposes
+convenient public methods. This provides a clean API while hiding the actor implementation details.
 
-- Sequential Execution: All actions on the state execute sequentially in a dedicated
-goroutine, guaranteeing no race conditions.
+Why This Pattern?
 
-- Type Safety: Using Go generics ensures type-safe state access without reflection.
+  - Clean API: Users interact with intuitive, domain-specific methods
+  - Encapsulation: The actor implementation detail is hidden
+  - Type Safety: Return concrete types instead of any
+  - Thread Safety: All state access is automatically serialized
 
-- Configuration via Builder: Worker-style fluent configuration with error accumulation.
+# Example: Bank Account
 
-- No Panic Recovery: Panics crash the actor's goroutine as they should in Go, rather
-than trying to continue with potentially corrupt state.
+Here's how to build a concurrent-safe bank account:
 
-Basic Usage:
+	package banking
 
-To create an actor, define your state type and use actor.Go() with a configuration:
+	import (
+		"context"
+		"fmt"
+		"tideland.dev/go/actor"
+	)
 
-	type Counter struct {
-		value int
+	// accountState is the internal state owned by the actor
+	type accountState struct {
+		balance int
+		holder  string
 	}
 
-	cfg := actor.NewConfig(context.Background())
-	counter, err := actor.Go(Counter{value: 0}, cfg)
-	if err != nil {
-		// Handle error
+	// Account provides thread-safe banking operations
+	type Account struct {
+		actor *actor.Actor[accountState]
 	}
-	defer counter.Stop()
 
-Actions on State:
+	// NewAccount creates a new bank account
+	func NewAccount(ctx context.Context, holder string, initialBalance int) (*Account, error) {
+		if initialBalance < 0 {
+			return nil, fmt.Errorf("initial balance cannot be negative")
+		}
 
-Actions are closures that receive a pointer to the state and can modify it:
+		cfg := actor.NewConfig(ctx)
+		act, err := actor.Go(accountState{
+			balance: initialBalance,
+			holder:  holder,
+		}, cfg)
+		if err != nil {
+			return nil, err
+		}
 
-	// Synchronous action (blocks until complete)
-	err := counter.Do(func(s *Counter) {
-		s.value++
-	})
+		return &Account{actor: act}, nil
+	}
 
-	// Asynchronous action (returns immediately)
-	err = counter.DoAsync(func(s *Counter) {
-		s.value++
-	})
+	// Deposit adds money to the account
+	func (a *Account) Deposit(amount int) error {
+		if amount <= 0 {
+			return fmt.Errorf("deposit amount must be positive")
+		}
+		return a.actor.Do(func(s *accountState) {
+			s.balance += amount
+		})
+	}
 
-	// Query state (read-only pattern)
-	value, err := counter.Query(func(s *Counter) int {
-		return s.value
-	})
+	// Withdraw removes money from the account with validation
+	func (a *Account) Withdraw(amount int) error {
+		if amount <= 0 {
+			return fmt.Errorf("withdrawal amount must be positive")
+		}
+		return a.actor.DoWithError(func(s *accountState) error {
+			if s.balance < amount {
+				return fmt.Errorf("insufficient funds")
+			}
+			s.balance -= amount
+			return nil
+		})
+	}
 
-	// Update and return a result atomically
-	oldValue, err := counter.Update(func(s *Counter) (any, error) {
-		old := s.value
-		s.value = 10
-		return old, nil
-	})
+	// Balance returns the current balance
+	func (a *Account) Balance() (int, error) {
+		result, err := a.actor.Query(func(s *accountState) any {
+			return s.balance
+		})
+		if err != nil {
+			return 0, err
+		}
+		return result.(int), nil
+	}
 
-Configuration:
+	// Close stops the actor
+	func (a *Account) Close() {
+		a.actor.Stop()
+	}
 
-The fluent configuration builder allows customization with error accumulation:
+Usage:
+
+	alice, _ := NewAccount(ctx, "Alice", 1000)
+	defer alice.Close()
+
+	alice.Deposit(200)
+	alice.Withdraw(100)
+
+	balance, _ := alice.Balance()
+	fmt.Printf("Balance: %d\n", balance)
+
+# Asynchronous Operations
+
+For operations that don't need immediate results:
+
+	// DepositAsync queues a deposit without waiting
+	func (a *Account) DepositAsync(amount int) error {
+		if amount <= 0 {
+			return fmt.Errorf("amount must be positive")
+		}
+		return a.actor.DoAsync(func(s *accountState) {
+			s.balance += amount
+		})
+	}
+
+	// WithdrawAndWait queues a withdrawal and returns an awaiter
+	func (a *Account) WithdrawAndWait(amount int) func() error {
+		if amount <= 0 {
+			return func() error { return fmt.Errorf("amount must be positive") }
+		}
+		return a.actor.DoAsyncAwaitWithError(func(s *accountState) error {
+			if s.balance < amount {
+				return fmt.Errorf("insufficient funds")
+			}
+			s.balance -= amount
+			return nil
+		})
+	}
+
+	// Usage
+	await := account.WithdrawAndWait(100)
+	// ... do other work ...
+	err := await() // Now wait for completion
+
+# Background Operations
+
+For periodic operations like interest calculation:
+
+	import "time"
+
+	type SavingsAccount struct {
+		actor         *actor.Actor[savingsState]
+		stopInterest  func()
+	}
+
+	type savingsState struct {
+		balance      int
+		interestRate float64
+	}
+
+	func NewSavingsAccount(ctx context.Context, initialBalance int, rate float64) (*SavingsAccount, error) {
+		cfg := actor.NewConfig(ctx)
+		act, err := actor.Go(savingsState{
+			balance:      initialBalance,
+			interestRate: rate,
+		}, cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		account := &SavingsAccount{actor: act}
+
+		// Calculate interest monthly
+		account.stopInterest = act.Repeat(30*24*time.Hour, func(s *savingsState) {
+			interest := int(float64(s.balance) * s.interestRate)
+			s.balance += interest
+		})
+
+		return account, nil
+	}
+
+	func (s *SavingsAccount) Close() {
+		s.stopInterest() // Stop background interest calculation
+		s.actor.Stop()
+	}
+
+# Best Practices
+
+Keep State Private
+
+The state struct should be unexported (lowercase):
+
+	// ✅ Good
+	type accountState struct {
+		balance int
+	}
+
+	type Account struct {
+		actor *actor.Actor[accountState]
+	}
+
+Return Concrete Types
+
+Convert any returns to concrete types in public methods:
+
+	// ✅ Good
+	func (a *Account) Balance() (int, error) {
+		result, err := a.actor.Query(func(s *accountState) any {
+			return s.balance
+		})
+		if err != nil {
+			return 0, err
+		}
+		return result.(int), nil
+	}
+
+Validate Before Actor Operations
+
+Validate inputs before submitting work to the actor:
+
+	// ✅ Good
+	func (a *Account) Withdraw(amount int) error {
+		if amount <= 0 {
+			return fmt.Errorf("amount must be positive")
+		}
+		return a.actor.DoWithError(func(s *accountState) error {
+			if s.balance < amount {
+				return fmt.Errorf("insufficient funds")
+			}
+			s.balance -= amount
+			return nil
+		})
+	}
+
+Provide Close/Shutdown Methods
+
+Always provide a way to gracefully stop the actor:
+
+	func (a *Account) Close() error {
+		a.actor.Stop()
+		<-a.actor.Done()
+		return a.actor.Err()
+	}
+
+Use DoWithError for Operations That Can Fail
+
+When operations might fail, use error-returning methods:
+
+	// ✅ Good
+	func (a *Account) Withdraw(amount int) error {
+		return a.actor.DoWithError(func(s *accountState) error {
+			if s.balance < amount {
+				return fmt.Errorf("insufficient funds")
+			}
+			s.balance -= amount
+			return nil
+		})
+	}
+
+# Configuration
+
+Customize actor behavior with the fluent configuration builder:
 
 	cfg := actor.NewConfig(ctx).
-		SetQueueCapacity(512).                    // Request queue size
-		SetActionTimeout(5 * time.Second).        // Max action duration
-		SetShutdownTimeout(10 * time.Second).     // Max shutdown wait
-		SetFinalizer(func(err error) error {      // Cleanup on stop
-			log.Printf("Actor stopped: %v", err)
+		SetQueueCapacity(1024).
+		SetActionTimeout(5 * time.Second).
+		SetFinalizer(func(err error) error {
+			log.Printf("Account closed: %v", err)
+			// Could save final state to database here
 			return nil
 		})
 
-	// Check for configuration errors
-	if err := cfg.Validate(); err != nil {
-		log.Fatal(err)
-	}
+	act, err := actor.Go(accountState{}, cfg)
 
-	actor, err := actor.Go(MyState{}, cfg)
+# Testing
 
-Features:
+Testing is straightforward since the actor encapsulates all concurrency:
 
-- Synchronous Actions: Do(), DoWithError(), DoWithErrorContext() block until complete
-
-- Asynchronous Actions: DoAsync(), DoAsyncWithError() queue work and return immediately
-
-- Async-Await Actions: DoAsyncAwait(), DoAsyncAwaitWithError() queue work immediately
-  and return an awaiter function that blocks until completion
-
-- Queries: Query() for read-only access with type-safe return values
-
-- Updates: Update() for atomic read-modify-write operations
-
-- Repeating Actions: Repeat() schedules periodic execution
-
-- Context Integration: Actors respect context cancellation for lifecycle management
-
-- Timeout Support: Per-action timeouts and context-based cancellation
-
-- Queue Status: QueueStatus() reports queue depth and capacity
-
-- Error Handling: Actions can return errors; async errors stop the actor
-
-Example - Bank Account:
-
-	type Account struct {
-		balance int
-		name    string
-	}
-
-	cfg := actor.NewConfig(context.Background())
-	account, _ := actor.Go(Account{balance: 100, name: "Savings"}, cfg)
-	defer account.Stop()
-
-	// Deposit
-	account.Do(func(s *Account) {
-		s.balance += 50
-	})
-
-	// Withdraw with validation
-	withdrawn, err := account.Update(func(s *Account) (any, error) {
-		if s.balance >= 30 {
-			s.balance -= 30
-			return true, nil
+	func TestAccount(t *testing.T) {
+		account, err := NewAccount(context.Background(), "Alice", 1000)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return false, fmt.Errorf("insufficient funds")
-	})
+		defer account.Close()
 
-	// Check balance
-	balance, _ := account.Query(func(s *Account) int {
-		return s.balance
-	})
+		// Test deposit
+		if err := account.Deposit(500); err != nil {
+			t.Fatal(err)
+		}
 
-Why This Design?
+		balance, _ := account.Balance()
+		if balance != 1500 {
+			t.Errorf("expected 1500, got %d", balance)
+		}
 
-This generic actor pattern solves a common problem with the embedding pattern: with
-embedding, developers could accidentally write direct getters/setters that bypass the
-actor, creating race conditions. By making the actor OWN the state, such bypasses
-become impossible - the compiler prevents direct state access.
+		// Test concurrent access
+		var wg sync.WaitGroup
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				account.Deposit(10)
+			}()
+		}
+		wg.Wait()
 
-For more examples, see the examples_test.go file.
+		balance, _ = account.Balance()
+		if balance != 2500 { // 1500 + (100 * 10)
+			t.Errorf("expected 2500, got %d", balance)
+		}
+	}
+
+# API Documentation
+
+For a complete API reference, see the API.md file in the repository or visit
+https://pkg.go.dev/tideland.dev/go/actor.
 */
 
 package actor
